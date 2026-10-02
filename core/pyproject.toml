@@ -7,7 +7,7 @@ name = "kyumi"
 version = "0.1.0"
 description = "Turn a STEP file into a .kyumi package and view it"
 requires-python = ">=3.11"
-dependencies = ["cadquery", "numpy", "trimesh"]
+dependencies = ["cadquery==2.8.0", "numpy", "trimesh"]
 
 [project.optional-dependencies]
 dev = ["pytest", "ruff"]

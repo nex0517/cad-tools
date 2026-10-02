@@ -30,6 +30,20 @@ def test_names_kept_exactly(drone: Model) -> None:
     assert {"Part37", "Part38", "Part39", "Part40"} <= names  # junk names are kept
 
 
+def test_shape_names_are_not_instance_names(drone: Model) -> None:
+    def shape_of(instance: str) -> str:
+        node = next(n for n in drone.nodes if n.name == instance)
+        return drone.shapes[node.shape].name
+
+    assert shape_of("Motor_FL") == shape_of("Motor_BR") == "Motor"
+    assert shape_of("Chip_IMU") == shape_of("Chip_Baro") == "Chip"
+    assert shape_of("Part38") == "Part37"  # a junk shape name stays junk
+    assert {s.name for s in drone.shapes.values()} == {
+        "CenterPlate", "Arm", "Screw", "Motor", "Propeller", "Part37",
+        "Board", "MCU", "Chip", "Connector", "Battery",
+    }  # fmt: skip
+
+
 def test_tree_paths(drone: Model) -> None:
     mcu = next(n for n in drone.nodes if n.name == "Chip_MCU")
     assert drone.path_of(mcu.id) == ["Drone", "Electronics", "FlightController", "Chip_MCU"]
@@ -65,6 +79,21 @@ def test_flat_file_imports(tmp_path: Path) -> None:
     assert len(flat.nodes) == 32  # root + 31 parts, no groups
     assert len(flat.shapes) == 11
     assert all(n.parent == flat.roots()[0].id for n in flat.nodes[1:])
+
+
+def test_messy_file(tmp_path: Path, drone: Model) -> None:
+    """Copies baked into place, no instancing, missing colours, a blank name."""
+    messy = import_fixture("drone_messy", tmp_path)
+    assert len(messy.nodes) == 32 and len(messy.shapes) == 31  # one shape per part
+    motors = [messy.shapes[n.shape] for n in messy.nodes if n.name.startswith("Motor_")]
+    clean_motor = next(s for s in drone.shapes.values() if s.name == "Motor")
+    # Rotated and moved copies still fingerprint like the original.
+    assert {m.fingerprint for m in motors} == {clean_motor.fingerprint}
+    assert messy.shapes[messy.node("n4").shape].color is None  # Arm_BL has no colour
+    blank = [s for s in messy.shapes.values() if s.name == ""]
+    assert len(blank) == 1
+    # OpenCascade names an unnamed placement after its STEP entity id; keep whatever it says.
+    assert all(n.name != "Chip_Baro" for n in messy.nodes)
 
 
 def test_round_trip(drone: Model, tmp_path: Path) -> None:
