@@ -28,8 +28,11 @@ def report_line(step: Path, out_dir: Path) -> str:
     out = out_dir / (step.stem + ".kyumi")
     try:
         timings = import_step(step, out)
-    except UnreadableFile as error:
-        return f"| {step.relative_to(REAL)} | failed: {error} | | | | |"
+    except Exception as error:  # noqa: BLE001 (any failure is a result worth recording)
+        reason = (
+            str(error) if isinstance(error, UnreadableFile) else f"{type(error).__name__}: {error}"
+        )
+        return f"| {step.relative_to(REAL)} | failed: {reason} | | | | |"
     model = load(out)
     seconds = sum(timings.values())
     size_mb = out.stat().st_size / 1e6
