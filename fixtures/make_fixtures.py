@@ -226,12 +226,15 @@ def name_subassembly_copies(tool: XCAFDoc_ShapeTool, label: TDF_Label) -> None:
 
 
 def write_step(assy: cq.Assembly, path: Path) -> None:
-    """Like assy.export(path), but with names on subassembly placements too."""
+    """Like assy.export(path), but with one root and names on subassembly placements."""
     root, doc = toCAF(assy, coloredSTEP=True)
     tool = XCAFDoc_DocumentTool.ShapeTool_s(doc.Main())
-    # toCAF returns a placement of the top assembly; name from the assembly itself.
+    # toCAF wraps the top assembly in an extra placement label, which would make
+    # the file read as "Drone -> Drone -> parts". Drop the wrapper, keep the assembly.
     top = TDF_Label()
     XCAFDoc_ShapeTool.GetReferredShape_s(root, top)
+    tool.RemoveShape(root, False)
+    tool.UpdateAssemblies()
     name_subassembly_copies(tool, top)
     write_doc(doc, path)
 
