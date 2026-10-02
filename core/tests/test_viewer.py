@@ -5,7 +5,7 @@ from __future__ import annotations
 import threading
 from http.server import HTTPServer
 from pathlib import Path
-from urllib.request import urlopen
+from urllib.request import Request, urlopen
 
 import pytest
 from kyumi.model import Model
@@ -33,5 +33,8 @@ def test_server_answers(drone: Model, tmp_path: Path) -> None:
         assert glb[:4] == b"glTF"
         with pytest.raises(Exception, match="404"):
             urlopen(base + "/manifest.json")  # only the page, model.json and meshes are served
+        # A request the browser was tricked into sending to us names another site.
+        with pytest.raises(Exception, match="403"):
+            urlopen(Request(base + "/model.json", headers={"Host": "evil.example:80"}))
     finally:
         server.shutdown()

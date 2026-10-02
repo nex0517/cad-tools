@@ -7,10 +7,11 @@ name = "kyumi"
 version = "0.1.0"
 description = "Turn a STEP file into a .kyumi package and view it"
 requires-python = ">=3.11"
-dependencies = ["cadquery==2.8.0", "numpy", "trimesh"]
+dependencies = ["cadquery-ocp==7.9.3.1.1", "numpy", "trimesh"]
 
 [project.optional-dependencies]
-dev = ["pytest", "ruff"]
+# cadquery is only used by fixtures/make_fixtures.py; the importer needs just OCP.
+dev = ["cadquery==2.8.0", "pytest", "ruff"]
 
 [project.scripts]
 kyumi = "kyumi.cli:main"
