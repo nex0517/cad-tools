@@ -5,6 +5,9 @@ Run from the repo root:  python fixtures/make_fixtures.py
 Writes three files next to this script:
   drone.step       quadcopter with named subassemblies, colours and true instances
   drone_flat.step  the same parts, all directly under the root (no subassemblies)
+  drone_messy.step the same parts the way a sloppy export looks: every copy is its
+                   own solid baked into place, some parts have no colour, one has
+                   no name
   bracket.step     a single part
   bracket_inch.step  the same part, with the file declaring inches instead of mm
 
@@ -40,11 +43,19 @@ ARM_THICKNESS = 4.0
 
 
 @dataclass
-class Part:
+class Proto:
+    """Unique geometry with its own name ("Motor"), separate from the instance names."""
+
     name: str
     shape: cq.Workplane
+
+
+@dataclass
+class Part:
+    name: str  # instance name ("Motor_FL"); "" is allowed, real files have those
+    proto: Proto
     loc: cq.Location
-    color: str
+    color: str | None  # None = the file says nothing about this part's colour
 
 
 @dataclass
@@ -128,7 +139,8 @@ def arm_tip(angle: float, along: float) -> tuple[float, float]:
 
 
 def frame_group() -> Group:
-    plate, arm, screw = make_plate(), make_arm(), make_screw()
+    plate = Proto("CenterPlate", make_plate())
+    arm, screw = Proto("Arm", make_arm()), Proto("Screw", make_screw())
     top = PLATE_THICKNESS / 2
     children: list[Part | Group] = [Part("CenterPlate", plate, at(), "#222222")]
     for corner, angle in CORNERS.items():
@@ -147,7 +159,7 @@ def frame_group() -> Group:
 
 
 def propulsion_group() -> Group:
-    motor, prop = make_motor(), make_propeller()
+    motor, prop = Proto("Motor", make_motor()), Proto("Propeller", make_propeller())
     z = PLATE_THICKNESS / 2 + ARM_THICKNESS
     children: list[Part | Group] = []
     for corner, angle in CORNERS.items():
@@ -158,9 +170,10 @@ def propulsion_group() -> Group:
 
 
 def electronics_group() -> Group:
-    standoff, ic_small = make_standoff(), make_chip(3, 3, 1)
+    # "Part37": a junk shape name, like real exports often have.
+    standoff, ic_small = Proto("Part37", make_standoff()), Proto("Chip", make_chip(3, 3, 1))
     children: list[Part | Group] = []
-    # "Part37".."Part40": deliberately junk names, like real exports often have.
+    # "Part37".."Part40": deliberately junk instance names too.
     for i, (x, y) in enumerate(
         [(15.25, 15.25), (-15.25, 15.25), (-15.25, -15.25), (15.25, -15.25)]
     ):
@@ -169,11 +182,11 @@ def electronics_group() -> Group:
         "FlightController",
         at(0, 0, 20.8),
         [
-            Part("Board", make_board(), at(), "#1e7b3c"),
-            Part("Chip_MCU", make_chip(10, 10, 1.2), at(0, 0, 0.8), "#111111"),
+            Part("Board", Proto("Board", make_board()), at(), "#1e7b3c"),
+            Part("Chip_MCU", Proto("MCU", make_chip(10, 10, 1.2)), at(0, 0, 0.8), "#111111"),
             Part("Chip_IMU", ic_small, at(8, 8, 0.8), "#111111"),
             Part("Chip_Baro", ic_small, at(-8, 8, 0.8), "#111111"),
-            Part("Connector", make_chip(6, 4, 3), at(0, -13, 0.8), "#f0f0f0"),
+            Part("Connector", Proto("Connector", make_chip(6, 4, 3)), at(0, -13, 0.8), "#f0f0f0"),
         ],
     )
     children.append(board)
@@ -181,8 +194,27 @@ def electronics_group() -> Group:
 
 
 def drone_tree() -> Group:
-    battery = Part("Battery", make_battery(), at(0, 0, -PLATE_THICKNESS / 2 - 15), "#2050c0")
-    return Group("Drone", at(), [frame_group(), propulsion_group(), electronics_group(), battery])
+    battery = Proto("Battery", make_battery())
+    battery_part = Part("Battery", battery, at(0, 0, -PLATE_THICKNESS / 2 - 15), "#2050c0")
+    return Group(
+        "Drone", at(), [frame_group(), propulsion_group(), electronics_group(), battery_part]
+    )
+
+
+def messy_tree() -> Group:
+    """What a careless export looks like: no instances, missing colours, a blank name.
+
+    Every copy gets its own solid, already rotated and moved into place, so the
+    importer cannot rely on shared geometry: only the fingerprint can tell that
+    the four motors are the same part.
+    """
+    parts: list[Part | Group] = []
+    for part in flatten(drone_tree(), cq.Location()):
+        baked = cq.Workplane(part.proto.shape.val().moved(part.loc))
+        name = "" if part.name == "Chip_Baro" else part.name
+        color = None if part.name in ("Arm_BL", "Screw_5") else part.color
+        parts.append(Part(name, Proto(name, baked), at(), color))
+    return Group("Drone", at(), parts)
 
 
 # ---------- writing ----------
@@ -194,8 +226,14 @@ def to_assembly(group: Group) -> cq.Assembly:
         if isinstance(child, Group):
             assy.add(to_assembly(child), name=child.name, loc=child.loc)
         else:
-            assy.add(child.shape, name=child.name, loc=child.loc, color=cq.Color(child.color))
+            color = cq.Color(child.color) if child.color else None
+            assy.add(child.proto.shape, name=child.name, loc=child.loc, color=color)
     return assy
+
+
+def shape_names(group: Group) -> dict[str, str]:
+    """Instance name -> shape name, for every part in the tree."""
+    return {p.name: p.proto.name for p in flatten(group, cq.Location())}
 
 
 def name_of(label: TDF_Label) -> str:
@@ -207,27 +245,33 @@ def name_of(label: TDF_Label) -> str:
     return attr.Get().ToExtString()
 
 
-def name_subassembly_copies(tool: XCAFDoc_ShapeTool, label: TDF_Label) -> None:
-    """Give every unnamed component the name of the thing it places.
+def fix_names(tool: XCAFDoc_ShapeTool, label: TDF_Label, shapes: dict[str, str]) -> None:
+    """Make the names look like a real CAD export.
 
-    CadQuery leaves the *placement* of a subassembly unnamed (only the
-    subassembly itself is named), so readers would show "14" instead of "Frame".
-    Real CAD tools name both, so we do too.
+    CadQuery names a shared shape after its *first* instance ("Motor_FL" for all
+    four motors) and leaves the placement of a subassembly unnamed (readers would
+    show "14" instead of "Frame"). Real tools name the shape ("Motor") and every
+    placement, so we do too.
     """
     components = TDF_LabelSequence()
     tool.GetComponents_s(label, components)
     for i in range(1, components.Length() + 1):
         component, target = components.Value(i), TDF_Label()
         XCAFDoc_ShapeTool.GetReferredShape_s(component, target)
-        if not name_of(component):
-            TDataStd_Name.Set_s(component, TCollection_ExtendedString(name_of(target)))
         if XCAFDoc_ShapeTool.IsAssembly_s(target):
-            name_subassembly_copies(tool, target)
+            if not name_of(component):
+                TDataStd_Name.Set_s(component, TCollection_ExtendedString(name_of(target)))
+            fix_names(tool, target, shapes)
+        else:
+            # CadQuery replaces an empty instance name with a random UUID; put the "" back.
+            instance = name_of(component) if name_of(component) in shapes else ""
+            TDataStd_Name.Set_s(component, TCollection_ExtendedString(instance))
+            TDataStd_Name.Set_s(target, TCollection_ExtendedString(shapes[instance]))
 
 
-def write_step(assy: cq.Assembly, path: Path) -> None:
-    """Like assy.export(path), but with one root and names on subassembly placements."""
-    root, doc = toCAF(assy, coloredSTEP=True)
+def write_step(group: Group, path: Path) -> None:
+    """Like Assembly.export(path), but with one root and proper shape/placement names."""
+    root, doc = toCAF(to_assembly(group), coloredSTEP=True)
     tool = XCAFDoc_DocumentTool.ShapeTool_s(doc.Main())
     # toCAF wraps the top assembly in an extra placement label, which would make
     # the file read as "Drone -> Drone -> parts". Drop the wrapper, keep the assembly.
@@ -235,7 +279,7 @@ def write_step(assy: cq.Assembly, path: Path) -> None:
     XCAFDoc_ShapeTool.GetReferredShape_s(root, top)
     tool.RemoveShape(root, False)
     tool.UpdateAssemblies()
-    name_subassembly_copies(tool, top)
+    fix_names(tool, top, shape_names(group))
     write_doc(doc, path)
 
 
@@ -269,7 +313,7 @@ def flatten(group: Group, parent: cq.Location) -> list[Part]:
         if isinstance(child, Group):
             parts += flatten(child, parent * child.loc)
         else:
-            parts.append(Part(child.name, child.shape, parent * child.loc, child.color))
+            parts.append(Part(child.name, child.proto, parent * child.loc, child.color))
     return parts
 
 
@@ -288,25 +332,29 @@ def check_instancing(path: Path, expected_solids: int, expected_parts: int) -> N
 
 
 def count_unique(parts: list[Part]) -> int:
-    return len({id(p.shape) for p in parts})
+    return len({id(p.proto) for p in parts})
 
 
 def main() -> None:
     tree = drone_tree()
     parts = flatten(tree, cq.Location())
 
-    write_step(to_assembly(tree), HERE / "drone.step")
+    write_step(tree, HERE / "drone.step")
     check_instancing(HERE / "drone.step", count_unique(parts), len(parts))
 
     flat = Group("Drone", at(), list(parts))
-    write_step(to_assembly(flat), HERE / "drone_flat.step")
+    write_step(flat, HERE / "drone_flat.step")
     check_instancing(HERE / "drone_flat.step", count_unique(parts), len(parts))
+
+    # The messy file is *meant* to copy geometry: one solid per part.
+    write_step(messy_tree(), HERE / "drone_messy.step")
+    check_instancing(HERE / "drone_messy.step", len(parts), len(parts))
 
     bracket = make_bracket()
     write_single_part(bracket, "Bracket", "#7f8c8d", HERE / "bracket.step")
     # Same part, but the file declares inches: importers must convert it to mm.
     write_single_part(bracket, "Bracket", "#7f8c8d", HERE / "bracket_inch.step", unit="INCH")
-    print(f"wrote {len(parts)} parts ({count_unique(parts)} unique) and bracket.step")
+    print(f"wrote {len(parts)} parts ({count_unique(parts)} unique), messy copy, brackets")
 
 
 if __name__ == "__main__":
