@@ -22,3 +22,15 @@ jobs:
       - run: ruff format --check core fixtures
       - run: ruff check core fixtures
       - run: pytest core
+
+  # Plain install, no [dev]: fails if core accidentally imports cadquery.
+  import-without-dev:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -e core
+      - run: kyumi import fixtures/drone.step -o drone.kyumi

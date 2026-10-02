@@ -82,15 +82,21 @@ def _blank_placement_ids(reader: STEPCAFControl_Reader) -> set[str]:
 
     OpenCascade names a blank placement after its id instead (node "95"). That id
     is renumbered on every export, so diff would see a rename; we want the "" back.
+    An id that some other placement really is named after is left out, so we
+    never erase a real name (that rare file keeps OpenCascade's substitute).
     """
     model = reader.Reader().StepModel()
-    ids: set[str] = set()
+    blank_ids: set[str] = set()
+    real_names: set[str] = set()
     for i in range(1, model.NbEntities() + 1):
         entity = model.Value(i)
         if isinstance(entity, StepRepr_NextAssemblyUsageOccurrence):
-            if entity.Name().ToCString() == "":
-                ids.add(entity.Id().ToCString())
-    return ids
+            name = entity.Name().ToCString()
+            if name == "":
+                blank_ids.add(entity.Id().ToCString())
+            else:
+                real_names.add(name)
+    return blank_ids - real_names
 
 
 def _file_units(reader: STEPCAFControl_Reader) -> str:

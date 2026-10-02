@@ -90,6 +90,18 @@ class Model:
     def copies(self, shape_id: str) -> list[Node]:
         return [n for n in self.nodes if n.shape == shape_id]
 
+    def leaves(self) -> list[Node]:
+        """The real parts: nodes that carry a shape (groups carry none)."""
+        return [n for n in self.nodes if n.shape is not None]
+
+    def groups_by_fingerprint(self) -> dict[str, list[Shape]]:
+        """Shapes with identical geometry, grouped. Makes a file whose copies were
+        baked into separate shapes (drone_messy: 31) look like the clean one (11)."""
+        groups: dict[str, list[Shape]] = {}
+        for shape in self.shapes.values():
+            groups.setdefault(shape.fingerprint, []).append(shape)
+        return groups
+
     def color_of(self, node: Node) -> str | None:
         """Instance colour wins over shape colour."""
         if node.color:

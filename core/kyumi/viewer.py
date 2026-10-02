@@ -52,7 +52,11 @@ def model_json(model: Model) -> dict:
 def make_handler(model: Model) -> type[BaseHTTPRequestHandler]:
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:  # noqa: N802 (name fixed by http.server)
-            if self.path == "/":
+            # A page on another site can make the browser call 127.0.0.1, but
+            # its Host header names that site; only answer requests meant for us.
+            if self.headers.get("Host") not in local_hosts(self.server.server_port):
+                self.reply(403, "text/plain", b"forbidden: unexpected Host header")
+            elif self.path == "/":
                 self.reply(200, "text/html", PAGE.read_bytes())
             elif self.path == "/model.json":
                 self.reply(200, "application/json", json.dumps(model_json(model)).encode())
@@ -72,6 +76,10 @@ def make_handler(model: Model) -> type[BaseHTTPRequestHandler]:
             pass  # keep the terminal quiet
 
     return Handler
+
+
+def local_hosts(port: int) -> set[str]:
+    return {f"127.0.0.1:{port}", f"localhost:{port}"}
 
 
 def mesh_paths(model: Model) -> set[str]:

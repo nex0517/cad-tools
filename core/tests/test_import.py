@@ -98,6 +98,28 @@ def test_messy_file(tmp_path: Path, drone: Model) -> None:
     assert all(n.name != "Chip_Baro" for n in messy.nodes)
 
 
+def test_blank_name_never_erases_a_real_one(tmp_path: Path) -> None:
+    """A part really named "95" in a file where placement 95 is blank keeps its name."""
+    text = (FIXTURES / "drone_messy.step").read_text()
+    assert "('97','Battery'" in text
+    (tmp_path / "collide.step").write_text(text.replace("('97','Battery'", "('97','95'"))
+    import_step(tmp_path / "collide.step", tmp_path / "collide.kyumi")
+    model = load(tmp_path / "collide.kyumi")
+    battery = next(n for n in model.leaves() if model.shapes[n.shape].name == "Battery")
+    assert battery.name == "95"
+
+
+def test_helpers(drone: Model, tmp_path: Path) -> None:
+    assert len(drone.leaves()) == 31  # the placed parts; groups are not leaves
+    assert all(n.shape for n in drone.leaves())
+    messy = import_fixture("drone_messy", tmp_path)
+    groups = messy.groups_by_fingerprint()
+    assert len(groups) == len(drone.shapes) == 11  # 31 baked copies collapse to 11 geometries
+    assert sorted(len(g) for g in groups.values()) == sorted(
+        len(drone.copies(s)) for s in drone.shapes
+    )
+
+
 def test_round_trip(drone: Model, tmp_path: Path) -> None:
     again = load(drone.path)
     assert again.nodes == drone.nodes
