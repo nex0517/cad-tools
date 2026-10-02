@@ -91,6 +91,9 @@ const box = new THREE.Box3().setFromObject(scene);
 const center = box.getCenter(new THREE.Vector3());
 const radius = Math.max(box.getSize(new THREE.Vector3()).length() / 2, 1);
 camera.position.copy(center).add(new THREE.Vector3(1, -1.2, 0.8).multiplyScalar(radius * 1.6));
+camera.near = radius / 1000;                  // clip planes follow the model size, so huge or
+camera.far = radius * 100;                    // tiny models are not cut off
+camera.updateProjectionMatrix();
 controls.target.copy(center);
 controls.update();
 
@@ -185,6 +188,11 @@ function revealInTree(id) {
 }
 
 // ---- info panel -----------------------------------------------------------
+// Names come straight from the STEP file, so they must not be inserted as HTML.
+function esc(text) {
+  return String(text).replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+}
+
 function showInfo(id) {
   const info = document.getElementById("info");
   if (!id) {
@@ -192,17 +200,17 @@ function showInfo(id) {
     return;
   }
   const node = byId.get(id);
-  const rows = [["path", node.path.map(p => p || "(unnamed)").join(" › ")]];
+  const rows = [["path", node.path.map(p => esc(p) || "(unnamed)").join(" › ")]];
   if (node.shape) {
     const s = model.shapes[node.shape];
     const faces = Object.entries(s.faces).filter(([, n]) => n).map(([k, n]) => `${k} ${n}`).join(", ");
     rows.push(
-      ["shape", `${s.name || "(unnamed)"} <span class="dim">(${node.shape}, ${s.copies} ${s.copies === 1 ? "copy" : "copies"})</span>`],
+      ["shape", `${esc(s.name) || "(unnamed)"} <span class="dim">(${node.shape}, ${s.copies} ${s.copies === 1 ? "copy" : "copies"})</span>`],
       ["size", s.size.map(v => fmt(v)).join(" × ") + " mm"],
       ["volume", fmt(s.volume) + " mm³"],
       ["area", fmt(s.area) + " mm²"],
       ["faces", faces],
-      ["colour", node.color ? `<span style="color:${node.color}">■</span> ${node.color}` : "none"],
+      ["colour", node.color ? `<span style="color:${esc(node.color)}">■</span> ${esc(node.color)}` : "none"],
       ["fingerprint", `<code>${s.fingerprint}</code>`],
     );
   } else {
@@ -210,7 +218,7 @@ function showInfo(id) {
   }
   const pos = node.world.slice(12, 15).map(v => fmt(v)).join(", ");
   rows.push(["position", `(${pos}) mm`]);
-  info.innerHTML = `<h2>${node.name || "(unnamed)"}</h2><table>` +
+  info.innerHTML = `<h2>${esc(node.name) || "(unnamed)"}</h2><table>` +
     rows.map(([k, v]) => `<tr><td>${k}</td><td>${v}</td></tr>`).join("") + "</table>";
 }
 showInfo(null);
