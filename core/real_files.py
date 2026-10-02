@@ -5,42 +5,61 @@ Those files are not committed (their licences do not allow it), so this report
 is how we track whether core copes with real-world exports. Later it will also
 run `kyumi diff` on the v1/v2 pairs in fixtures/real/pairs/.
 
+"junk names" counts leaves named "", digits only, or Part/Body/Solid + number:
+these are the files where categorize cannot lean on names.
+
     python core/real_files.py
 """
 
 from __future__ import annotations
 
+import re
 import sys
 import tempfile
 from pathlib import Path
 
 from kyumi import load
 from kyumi.package import import_step
-from kyumi.reader import UnreadableFile
 
 ROOT = Path(__file__).resolve().parents[1]
 REAL = ROOT / "fixtures" / "real"
 REPORT = ROOT / "docs" / "real-files.md"
 
 
+COLUMNS = (
+    "file | import | units | nodes | shapes | depth | junk names | coloured | time | .kyumi size"
+)
+JUNK_NAME = re.compile(r"^(|\d+|(part|body|solid)[ _-]?\d+)$", re.IGNORECASE)
+
+
+def percent(flags: list[bool]) -> str:
+    return f"{100 * sum(flags) / len(flags):.0f} %" if flags else "-"
+
+
 def report_line(step: Path, out_dir: Path) -> str:
-    """One table row: counts, time and size, or the error message."""
+    """One table row: counts and quality numbers, or the error that stopped the import."""
     out = out_dir / (step.stem + ".kyumi")
     try:
         timings = import_step(step, out)
+        model = load(out)
     except Exception as error:  # noqa: BLE001 (any failure is a result worth recording)
-        reason = (
-            str(error) if isinstance(error, UnreadableFile) else f"{type(error).__name__}: {error}"
-        )
-        return f"| {step.relative_to(REAL)} | failed: {reason} | | | | |"
-    model = load(out)
-    seconds = sum(timings.values())
-    size_mb = out.stat().st_size / 1e6
+        blanks = " |" * (COLUMNS.count("|") - 2)
+        return f"| {step.relative_to(REAL)} | failed: {type(error).__name__}: {error} |{blanks}"
+    leaves = model.leaves()
     groups = len(model.groups_by_fingerprint())
-    return (
-        f"| {step.relative_to(REAL)} | ok | {len(model.nodes)} | {len(model.shapes)} ({groups} "
-        f"distinct geometries) | {seconds:.1f} s | {size_mb:.1f} MB |"
-    )
+    cells = [
+        str(step.relative_to(REAL)),
+        "ok",
+        model.source_units,
+        str(len(model.nodes)),
+        f"{len(model.shapes)} ({groups} distinct geometries)",
+        str(max((len(model.path_of(n.id)) for n in model.nodes), default=0)),
+        percent([bool(JUNK_NAME.match(n.name)) for n in leaves]),
+        percent([model.color_of(n) is not None for n in leaves]),
+        f"{sum(timings.values()):.1f} s",
+        f"{out.stat().st_size / 1e6:.1f} MB",
+    ]
+    return "| " + " | ".join(cells) + " |"
 
 
 def main() -> None:
@@ -63,7 +82,7 @@ def main() -> None:
             for step in steps:
                 print(step.relative_to(REAL), file=sys.stderr)
                 lines.append(report_line(step, Path(tmp)))
-    REPORT.write_text("\n".join(lines) + "\n")
+    REPORT.write_text("\n".join(lines) + "\n", encoding="utf-8")
     print(f"wrote {REPORT.relative_to(ROOT)} ({len(steps)} files)")
 
 

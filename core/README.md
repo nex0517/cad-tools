@@ -5,10 +5,20 @@ and shows it in a browser.
 
 ## Install
 
+Mac / Linux:
+
 ```sh
 python3.11 -m venv .venv && source .venv/bin/activate
 pip install -e core            # pulls in OCP (OpenCascade), numpy, trimesh
 pip install -e "core[dev]"     # adds cadquery (fixture generator), pytest, ruff
+```
+
+Windows (Command Prompt):
+
+```bat
+py -3.11 -m venv .venv && .venv\Scripts\activate
+pip install -e core
+pip install -e "core[dev]"
 ```
 
 ## Use
