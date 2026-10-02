@@ -25,7 +25,11 @@ an engineer can review it like a code diff:
 ## Approach (draft)
 
 1. `load()` both packages.
-2. **Match nodes.** Score every plausible old/new pair on:
+2. **Match nodes.** First narrow the candidates, then score. Comparing every
+   old node with every new one is 25 million pairs for a 5,000-part assembly,
+   so a pair is only considered when the two nodes share a name, share a
+   fingerprint, or sit within a small distance of each other in world
+   coordinates (bucketed on a coarse grid). Score each candidate pair on:
    - same name (strong, but names can change or be junk),
    - same fingerprint (strong, but four motors share one),
    - close world position (breaks ties between identical copies),
