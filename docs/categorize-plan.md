@@ -32,7 +32,7 @@ electronics) for a flowchart view. Today engineers do this by hand.
 - **Two kinds of names.** A shape has its own name (`Motor`, `Chip`, or junk
   like `Part37`); each node has an instance name (`Motor_FL`, `Chip_Baro`,
   `Part38`). Both go on the card; either may be junk or blank. In
-  `drone_messy.step` the blank part arrives as shape `""`, node `"95"`.
+  `drone_messy.step` the blank part arrives as shape `""`, node `""`.
 - **Instancing is not guaranteed.** `drone.step` has 11 shapes for 31 parts;
   `drone_messy.step` has 31 shapes for the same 31 parts (copies baked into
   place). "Collapse duplicates" must therefore group by **fingerprint**, not

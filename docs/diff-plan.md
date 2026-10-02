@@ -37,9 +37,10 @@ Everything below is in `core` today and the plan relies on it:
   (`test_fingerprint.py`).
 - Names are *two* things: the **shape** name (`Motor`) and the **node** name
   (`Motor_FL`). Real files can have either one junk or blank: in
-  `drone_messy.step` the blank part comes back as shape `""`, node `"95"`
-  (OpenCascade names an unnamed placement after its STEP entity id). Matching
-  must cope with both names being useless.
+  `drone_messy.step` the blank part comes back as shape `""`, node `""`
+  (OpenCascade would name the placement after its STEP entity id, which
+  changes on every export; the importer puts the blank back). Matching must
+  cope with both names being useless.
 - Transforms are relative to the parent. Moving the `Frame` group moves 13
   parts in world space but changes exactly one node's `transform`.
 - A `.kyumi` for the 31-part drone imports in ~90 ms, so diff can afford to
