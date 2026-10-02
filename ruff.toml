@@ -1,0 +1,6 @@
+# Shared lint/format settings for core/ and fixtures/.
+line-length = 100
+target-version = "py311"
+
+[lint]
+select = ["E", "F", "I", "UP", "B"]
