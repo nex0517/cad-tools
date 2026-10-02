@@ -93,7 +93,8 @@ def test_messy_file(tmp_path: Path, drone: Model) -> None:
     assert messy.shapes[messy.node("n4").shape].color is None  # Arm_BL has no colour
     blank = [s for s in messy.shapes.values() if s.name == ""]
     assert len(blank) == 1
-    # OpenCascade names an unnamed placement after its STEP entity id; keep whatever it says.
+    # Blank in the file stays blank, not the entity id OpenCascade would put there.
+    assert [n.name for n in messy.nodes if n.shape == blank[0].id] == [""]
     assert all(n.name != "Chip_Baro" for n in messy.nodes)
 
 
