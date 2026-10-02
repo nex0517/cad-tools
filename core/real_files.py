@@ -74,10 +74,7 @@ def main() -> None:
     if not steps:
         lines.append("No STEP files found in `fixtures/real/`.")
     else:
-        lines += [
-            "| file | import | nodes | shapes | time | .kyumi size |",
-            "|---|---|---|---|---|---|",
-        ]
+        lines += [f"| {COLUMNS} |", "|---" * (COLUMNS.count("|") + 1) + "|"]
         with tempfile.TemporaryDirectory() as tmp:
             for step in steps:
                 print(step.relative_to(REAL), file=sys.stderr)
