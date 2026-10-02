@@ -42,6 +42,14 @@ Hand-label the drone fixture (and later real models); generate a renamed copy;
 report accuracy with and without names. Run in CI with a recorded LLM response
 so tests are deterministic and free.
 
+## Open questions (draft)
+
+- What are the categories? Possibly "which team owns this part".
+- Can copies of the same part need different categories? Labels are stored
+  per *shape*, so all four motors share one label. If categories mean team
+  ownership, the same screw might belong to the frame team in one place and the
+  electronics team in another, which would need per-node labels instead.
+
 ## What I need from core
 
 - `load(path) -> Model`.
