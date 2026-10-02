@@ -83,7 +83,9 @@ children (majority vote), tie broken by name.
 - **moved**: world transform differs. Compare positions with a 0.01 mm
   tolerance and rotations with 0.01°, *after* checking whether the parent moved
   — a part whose own `transform` is unchanged is not "moved", only its group is.
-- **re-parented**: parent path differs.
+- **re-parented**: the parent *node* differs — i.e. the new parent is not the
+  match of the old parent. Compare matched parent pairs, not path strings, or
+  renaming one group would mark every part inside it as re-parented.
 - **modified**: fingerprint differs. Confirm with raw measurements so a value
   that merely crossed a rounding boundary (volume 1234.4 → 1234.6) is reported
   as "unchanged (rounding)" instead: modified = any of volume, area, inertia
@@ -97,8 +99,14 @@ added and a removed node share a fingerprint, report it as **moved far**
 ### 3. Detail diff (one pair, on request)
 
 1. `model.read(shape.brep)` for both, `BRepTools.Read` into `TopoDS_Shape`.
-2. Place both with their world transforms (`BRepBuilderAPI_Transform`).
+2. Compare in the **part's own frame**: breps are stored untransformed, so use
+   them as-is (no world transform). Placement is already reported by the
+   "moved" tag; applying both world transforms here would turn a 5 mm move into
+   fake added/removed material and hide the real edit. If the shape's local
+   origin changed between versions (part re-exported), align by centre of mass
+   and sorted principal axes first (`center`, `inertia` from the manifest).
 3. `BRepAlgoAPI_Cut(new, old)` = added material; `Cut(old, new)` = removed.
+   For display, place both results with the **new** world transform.
 4. Mesh both with `core`'s `mesh_glb`, write them next to the diff as
    `added.glb` / `removed.glb`.
 5. Booleans can fail on near-coincident faces; wrap with a fuzzy value

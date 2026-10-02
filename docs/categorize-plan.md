@@ -53,7 +53,11 @@ electronics) for a flowchart view. Today engineers do this by hand.
 ### 1. Profile cards
 
 One card per **fingerprint group** (so the messy file and the clean file give
-the same cards):
+the same cards). The fingerprint cannot tell a part from its mirror image, so a
+group is split further by **shape name** when its members have different
+non-empty names (a left and a right bracket are usually named differently and
+may have different roles); if the names are blank or junk, mirror parts share
+one card and one label, which the mirror risk below accepts for v1.
 
 ```json
 {
@@ -167,6 +171,10 @@ anyone trusts the numbers.
 - **Names carry most of the signal** in real files; the renamed test will show
   how far geometry alone gets us. Expect fasteners and boards to be fine and
   "which bracket is airframe vs electronics" to need the tree context.
+- **Mirror parts** (left/right) share a fingerprint, so without distinct names
+  they share a card and a sidecar key. If the evaluation set shows this
+  matters, add a chirality bit to the fingerprint in `core` (sign of the
+  triple product of the principal axes) — a format change, so decide early.
 - **Per-shape labels vs per-copy categories** (see open questions): if the
   answer is per copy, the labels file needs a per-path override and the LLM
   needs node-level cards for parts with copies under different parents.
