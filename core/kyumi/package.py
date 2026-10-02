@@ -15,7 +15,7 @@ from OCP.TopTools import TopTools_FormatVersion
 from kyumi.measure import measure
 from kyumi.mesh import mesh_glb
 from kyumi.model import FORMAT, VERSION, Model, Node, Shape
-from kyumi.reader import RawModel, read_step
+from kyumi.reader import RawModel, RawShape, read_step
 
 GENERATOR = {"name": "kyumi-core", "version": "0.1.0"}
 
@@ -64,18 +64,23 @@ def write_package(
         zf.writestr("manifest.json", json.dumps(manifest(model), indent=1))
 
 
-def brep_text(raw_shape) -> str:
+def brep_text(raw_shape: RawShape) -> str:
     # OCP's stream overload of BRepTools.Write crashes, so go through a temp file.
+    # A directory rather than NamedTemporaryFile: Windows locks an open file, so
+    # OCCT could not write to it and we could not read it back.
     # Triangles are left out: the .glb already has them and they bloat the text.
-    with tempfile.NamedTemporaryFile(suffix=".brep") as tmp:
-        BRepTools.Write_s(
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tmp = Path(tmp_dir) / "shape.brep"
+        ok = BRepTools.Write_s(
             raw_shape.geometry,
-            tmp.name,
+            str(tmp),
             False,
             False,
             TopTools_FormatVersion.TopTools_FormatVersion_VERSION_1,
         )
-        return Path(tmp.name).read_text()
+        if not ok:
+            raise ValueError(f"could not write BREP for shape {raw_shape.id} ({raw_shape.name!r})")
+        return tmp.read_text(encoding="ascii")
 
 
 def manifest(model: Model) -> dict:
