@@ -91,9 +91,11 @@ const box = new THREE.Box3().setFromObject(scene);
 const center = box.getCenter(new THREE.Vector3());
 const radius = Math.max(box.getSize(new THREE.Vector3()).length() / 2, 1);
 camera.position.copy(center).add(new THREE.Vector3(1, -1.2, 0.8).multiplyScalar(radius * 1.6));
-camera.near = radius / 1000;                  // clip planes follow the model size, so huge or
+camera.near = radius / 10000;                 // clip planes follow the model size, so huge or
 camera.far = radius * 100;                    // tiny models are not cut off
 camera.updateProjectionMatrix();
+controls.minDistance = radius / 100;          // zoom stays well outside the near plane
+controls.maxDistance = radius * 50;           // and inside the far plane
 controls.target.copy(center);
 controls.update();
 
