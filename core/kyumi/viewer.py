@@ -79,7 +79,10 @@ def mesh_paths(model: Model) -> set[str]:
 
 
 def serve(model: Model, port: int = 8765, open_browser: bool = True) -> None:
-    server = HTTPServer(("127.0.0.1", port), make_handler(model))
+    try:
+        server = HTTPServer(("127.0.0.1", port), make_handler(model))
+    except OSError as error:
+        raise ValueError(f"cannot listen on port {port} ({error.strerror}); try --port 0") from None
     url = f"http://127.0.0.1:{server.server_port}/"
     print(f"viewing {model.source_file} at {url}  (Ctrl+C to stop)")
     if open_browser:
