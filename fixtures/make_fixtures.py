@@ -16,6 +16,7 @@ object, which makes CadQuery write the geometry once and reference it from every
 copy. `check_instancing` confirms that by counting solids in the written file.
 """
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -281,6 +282,14 @@ def write_step(group: Group, path: Path) -> None:
     tool.UpdateAssemblies()
     fix_names(tool, top, shape_names(group))
     write_doc(doc, path)
+    restore_blank_names(path)
+
+
+def restore_blank_names(path: Path) -> None:
+    # OpenCascade refuses to write an empty product name and puts its own
+    # ("Open CASCADE STEP translator 7.9 ...") instead. We want the blank back.
+    text = re.sub(r"'Open CASCADE STEP translator [^']*'", "''", path.read_text())
+    path.write_text(text)
 
 
 def write_single_part(
