@@ -197,14 +197,6 @@ anyone trusts the numbers.
 - Is "unknown" an acceptable output for the flowchart, or must every part get
   a category?
 
-## Open questions (draft)
-
-- What are the categories? Possibly "which team owns this part".
-- Can copies of the same part need different categories? Labels are stored
-  per *shape*, so all four motors share one label. If categories mean team
-  ownership, the same screw might belong to the frame team in one place and the
-  electronics team in another, which would need per-node labels instead.
-
 ## What I need from core
 
 All available today in `core`:
