@@ -13,6 +13,7 @@ from pathlib import Path
 from OCP.IFSelect import IFSelect_RetDone
 from OCP.Quantity import Quantity_Color, Quantity_TypeOfColor
 from OCP.STEPCAFControl import STEPCAFControl_Reader
+from OCP.StepRepr import StepRepr_NextAssemblyUsageOccurrence
 from OCP.TCollection import TCollection_ExtendedString
 from OCP.TColStd import TColStd_SequenceOfAsciiString
 from OCP.TDataStd import TDataStd_Name
@@ -65,7 +66,7 @@ def read_step(path: Path) -> RawModel:
     if not reader.Transfer(doc):
         raise UnreadableFile(f"{path}: STEP file contains no usable geometry")
 
-    walker = _Walker(doc)
+    walker = _Walker(doc, _blank_placement_ids(reader))
     roots = TDF_LabelSequence()
     walker.shapes.GetFreeShapes(roots)
     for i in range(1, roots.Length() + 1):
@@ -74,6 +75,22 @@ def read_step(path: Path) -> RawModel:
         raise UnreadableFile(f"{path}: STEP file contains no shapes")
     walker.model.units = _file_units(reader)
     return walker.model
+
+
+def _blank_placement_ids(reader: STEPCAFControl_Reader) -> set[str]:
+    """Ids of the placements whose name is blank in the file.
+
+    OpenCascade names a blank placement after its id instead (node "95"). That id
+    is renumbered on every export, so diff would see a rename; we want the "" back.
+    """
+    model = reader.Reader().StepModel()
+    ids: set[str] = set()
+    for i in range(1, model.NbEntities() + 1):
+        entity = model.Value(i)
+        if isinstance(entity, StepRepr_NextAssemblyUsageOccurrence):
+            if entity.Name().ToCString() == "":
+                ids.add(entity.Id().ToCString())
+    return ids
 
 
 def _file_units(reader: STEPCAFControl_Reader) -> str:
@@ -90,11 +107,12 @@ def _file_units(reader: STEPCAFControl_Reader) -> str:
 class _Walker:
     """Walks the XCAF label tree once, numbering nodes and shapes as it goes."""
 
-    def __init__(self, doc: TDocStd_Document) -> None:
+    def __init__(self, doc: TDocStd_Document, blank_placement_ids: set[str]) -> None:
         self.shapes: XCAFDoc_ShapeTool = XCAFDoc_DocumentTool.ShapeTool_s(doc.Main())
         self.colors: XCAFDoc_ColorTool = XCAFDoc_DocumentTool.ColorTool_s(doc.Main())
         self.model = RawModel(units="mm")
         self.shape_ids: dict[int, str] = {}  # XCAF label tag of the prototype -> "s1", ...
+        self.blank_placement_ids = blank_placement_ids
 
     def visit(self, label: TDF_Label, parent: str | None) -> None:
         # A component label is a *reference* ("put prototype X here"); follow it
@@ -103,9 +121,12 @@ class _Walker:
         if not self.shapes.GetReferredShape_s(label, proto):
             proto = label
 
+        name = name_of(label)
+        if self.shapes.IsReference_s(label) and name in self.blank_placement_ids:
+            name = ""
         node = Node(
             id=f"n{len(self.model.nodes)}",
-            name=name_of(label),
+            name=name,
             parent=parent,
             shape=None if self.shapes.IsAssembly_s(proto) else self._shape_id(proto),
             transform=_matrix(label),
