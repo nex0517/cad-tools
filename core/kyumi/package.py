@@ -22,6 +22,8 @@ GENERATOR = {"name": "kyumi-core", "version": "0.1.0"}
 
 def import_step(step_path: Path, out_path: Path, breps: bool = True) -> dict[str, float]:
     """STEP -> .kyumi. Returns seconds spent per stage so the CLI can print them."""
+    if out_path.resolve() == step_path.resolve():
+        raise ValueError(f"{out_path}: output would overwrite the input STEP file")
     timings: dict[str, float] = {}
 
     start = time.perf_counter()
@@ -105,6 +107,8 @@ def load(path: Path | str) -> Model:
     if not zipfile.is_zipfile(path):
         raise ValueError(f"{path}: not a .kyumi package (run `kyumi import` on STEP files first)")
     with zipfile.ZipFile(path) as zf:
+        if "manifest.json" not in zf.namelist():
+            raise ValueError(f"{path}: not a .kyumi package (no manifest.json inside the zip)")
         data = json.loads(zf.read("manifest.json"))
     if data.get("format") != FORMAT:
         raise ValueError(f"{path}: manifest.json is not a kyumi manifest")

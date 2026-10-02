@@ -1,5 +1,6 @@
 """End-to-end checks on the committed fixtures."""
 
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -127,6 +128,22 @@ def test_unreadable_file_message(tmp_path: Path) -> None:
         import_step(junk, tmp_path / "x.kyumi")
     with pytest.raises(UnreadableFile, match="not found"):
         import_step(tmp_path / "missing.step", tmp_path / "x.kyumi")
+
+
+def test_output_must_not_overwrite_input(tmp_path: Path) -> None:
+    step = tmp_path / "copy.step"
+    step.write_bytes((FIXTURES / "bracket.step").read_bytes())
+    with pytest.raises(ValueError, match="overwrite"):
+        import_step(step, step)
+    assert step.read_bytes() == (FIXTURES / "bracket.step").read_bytes()
+
+
+def test_zip_without_manifest_is_rejected(tmp_path: Path) -> None:
+    plain = tmp_path / "plain.zip"
+    with zipfile.ZipFile(plain, "w") as zf:
+        zf.writestr("hello.txt", "not a kyumi file")
+    with pytest.raises(ValueError, match="manifest.json"):
+        load(plain)
 
 
 def test_cli_import_and_info(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
