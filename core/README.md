@@ -16,7 +16,7 @@ pip install pytest ruff        # for development
 ```sh
 kyumi import fixtures/drone.step -o drone.kyumi   # prints time per stage
 kyumi info drone.kyumi                            # the parts tree, copy counts, sizes
-kyumi view drone.kyumi                            # 3D viewer in the browser (Milestone 4)
+kyumi view drone.kyumi                            # 3D viewer in the browser (Ctrl+C to stop)
 ```
 
 `kyumi import --no-breps` skips the exact geometry files (`breps/`), which diff
@@ -42,6 +42,8 @@ for node in model.nodes:
 | `kyumi/mesh.py`    | triangle mesh (GLB) per shape, detail scaled to the shape's size |
 | `kyumi/package.py` | writes/reads the zip; `import_step()` and `load()` |
 | `kyumi/model.py`   | the `Model`, `Shape`, `Node` dataclasses that diff and categorize will use |
+| `kyumi/viewer.py`  | `kyumi view`: serves `viewer.html`, `/model.json` and the meshes from the zip |
+| `kyumi/viewer.html`| the page: three.js from a CDN, orbit, click-to-select, tree panel. No build step |
 | `kyumi/cli.py`     | the `kyumi` command |
 
 ## Tests

@@ -9,6 +9,7 @@ from pathlib import Path
 from kyumi.model import Model, Node
 from kyumi.package import import_step, load
 from kyumi.reader import UnreadableFile
+from kyumi.viewer import serve
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -23,12 +24,19 @@ def main(argv: list[str] | None = None) -> None:
     info = commands.add_parser("info", help="print the parts tree of a .kyumi package")
     info.add_argument("kyumi", type=Path)
 
+    view = commands.add_parser("view", help="open a .kyumi package in the browser")
+    view.add_argument("kyumi", type=Path)
+    view.add_argument("--port", type=int, default=8765, help="0 picks a free port")
+    view.add_argument("--no-browser", action="store_true", help="just print the URL")
+
     args = parser.parse_args(argv)
     try:
         if args.command == "import":
             run_import(args.step, args.out or args.step.with_suffix(".kyumi"), not args.no_breps)
         elif args.command == "info":
             print_info(load(args.kyumi))
+        elif args.command == "view":
+            serve(load(args.kyumi), args.port, not args.no_browser)
     except (UnreadableFile, ValueError) as error:
         sys.exit(f"error: {error}")
 

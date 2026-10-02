@@ -1,0 +1,219 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>kyumi viewer</title>
+<style>
+  html, body { margin: 0; height: 100%; font: 13px/1.4 system-ui, sans-serif; color: #ddd; background: #1b1d22; }
+  body { display: grid; grid-template-columns: 280px 1fr 300px; height: 100%; }
+  #tree, #info { overflow: auto; padding: 10px; background: #23262d; }
+  #tree { border-right: 1px solid #333; }
+  #info { border-left: 1px solid #333; }
+  canvas { display: block; width: 100%; height: 100%; }
+  h2 { margin: 0 0 8px; font-size: 14px; color: #fff; }
+  ul { list-style: none; margin: 0; padding-left: 14px; }
+  li > div { padding: 2px 4px; border-radius: 3px; cursor: pointer; white-space: nowrap; }
+  li > div:hover { background: #333842; }
+  li > div.selected { background: #2a63c4; color: #fff; }
+  .toggle { display: inline-block; width: 14px; color: #888; }
+  .collapsed > ul { display: none; }
+  .count { color: #8a8; }
+  .dim { color: #888; }
+  table { border-collapse: collapse; width: 100%; }
+  td { padding: 2px 4px; vertical-align: top; }
+  td:first-child { color: #999; white-space: nowrap; }
+</style>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<div id="tree"><h2 id="title">loading…</h2><div id="treeRoot"></div></div>
+<canvas id="view"></canvas>
+<div id="info"><h2>Nothing selected</h2><p class="dim">Click a part in the 3D view or in the tree.
+Drag to orbit, right-drag to pan, scroll to zoom.</p></div>
+
+<script type="module">
+import * as THREE from "three";
+import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
+
+// ---- data -----------------------------------------------------------------
+const model = await (await fetch("/model.json")).json();
+const byId = new Map(model.nodes.map(n => [n.id, n]));
+const childrenOf = id => model.nodes.filter(n => n.parent === id);
+document.getElementById("title").textContent = model.file;
+
+// ---- scene ----------------------------------------------------------------
+const canvas = document.getElementById("view");
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+renderer.setPixelRatio(devicePixelRatio);
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x1b1d22);
+const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 100000);
+camera.up.set(0, 0, 1);                       // CAD files are Z-up; three.js defaults to Y-up
+const controls = new OrbitControls(camera, canvas);
+scene.add(new THREE.HemisphereLight(0xffffff, 0x404060, 1.6));
+const sun = new THREE.DirectionalLight(0xffffff, 1.4);
+sun.position.set(1, -1, 2);
+scene.add(sun);
+
+// One GLB per shape, loaded once; each node that uses it gets its own THREE.Mesh
+// sharing that geometry (same idea as shapes vs nodes in the manifest).
+const loader = new GLTFLoader();
+const geometries = new Map();                 // shape id -> BufferGeometry
+await Promise.all(Object.entries(model.shapes).filter(([, s]) => s.mesh).map(async ([id, s]) => {
+  const gltf = await loader.loadAsync("/" + s.mesh);
+  const geo = gltf.scene.getObjectByProperty("isMesh", true).geometry;
+  geo.computeVertexNormals();                 // the importer skips normals to keep files small
+  geometries.set(id, geo);
+}));
+
+const meshes = new Map();                     // node id -> THREE.Mesh
+for (const node of model.nodes) {
+  if (!geometries.has(node.shape)) continue;
+  const material = new THREE.MeshStandardMaterial({
+    color: node.color || "#9a9a9a", metalness: 0.1, roughness: 0.6,
+  });
+  const mesh = new THREE.Mesh(geometries.get(node.shape), material);
+  mesh.matrixAutoUpdate = false;
+  mesh.matrix.fromArray(node.world);          // already column-major from the server
+  mesh.userData.nodeId = node.id;
+  scene.add(mesh);
+  meshes.set(node.id, mesh);
+}
+
+// Frame the whole model.
+const box = new THREE.Box3().setFromObject(scene);
+const center = box.getCenter(new THREE.Vector3());
+const radius = Math.max(box.getSize(new THREE.Vector3()).length() / 2, 1);
+camera.position.copy(center).add(new THREE.Vector3(1, -1.2, 0.8).multiplyScalar(radius * 1.6));
+controls.target.copy(center);
+controls.update();
+
+function resize() {
+  const { clientWidth: w, clientHeight: h } = canvas;
+  if (canvas.width !== w * devicePixelRatio || canvas.height !== h * devicePixelRatio) {
+    renderer.setSize(w, h, false);
+    camera.aspect = w / h;
+    camera.updateProjectionMatrix();
+  }
+}
+renderer.setAnimationLoop(() => { resize(); controls.update(); renderer.render(scene, camera); });
+
+// ---- selection ------------------------------------------------------------
+let selected = null;                          // node id
+const HIGHLIGHT = new THREE.Color(0xffc040);
+
+function descendants(id) {
+  const out = [id];
+  for (const child of childrenOf(id)) out.push(...descendants(child.id));
+  return out;
+}
+
+function select(id) {
+  selected = id;
+  const lit = id ? new Set(descendants(id)) : new Set();
+  for (const [nodeId, mesh] of meshes) {
+    const on = lit.has(nodeId);
+    mesh.material.emissive.set(on ? HIGHLIGHT : 0x000000);
+    mesh.material.emissiveIntensity = on ? 0.35 : 0;
+  }
+  for (const row of document.querySelectorAll("#tree li > div")) {
+    row.classList.toggle("selected", row.dataset.id === id);
+  }
+  if (id) revealInTree(id);
+  showInfo(id);
+}
+
+// Click = pick the part under the mouse; a drag (orbit) is not a click.
+const raycaster = new THREE.Raycaster();
+let downAt = null;
+canvas.addEventListener("pointerdown", e => { downAt = [e.clientX, e.clientY]; });
+canvas.addEventListener("pointerup", e => {
+  if (!downAt || Math.hypot(e.clientX - downAt[0], e.clientY - downAt[1]) > 4) return;
+  const rect = canvas.getBoundingClientRect();
+  const pointer = new THREE.Vector2(
+    ((e.clientX - rect.left) / rect.width) * 2 - 1,
+    -((e.clientY - rect.top) / rect.height) * 2 + 1);
+  raycaster.setFromCamera(pointer, camera);
+  const hit = raycaster.intersectObjects([...meshes.values()])[0];
+  select(hit ? hit.object.userData.nodeId : null);
+});
+
+// ---- tree panel -----------------------------------------------------------
+function fmt(x, digits = 1) { return Number(x).toFixed(digits); }
+
+function buildTree(parentId) {
+  const ul = document.createElement("ul");
+  for (const node of childrenOf(parentId)) {
+    const li = document.createElement("li");
+    const kids = childrenOf(node.id);
+    const row = document.createElement("div");
+    row.dataset.id = node.id;
+    const toggle = document.createElement("span");
+    toggle.className = "toggle";
+    toggle.textContent = kids.length ? "▾" : "";
+    toggle.onclick = e => { e.stopPropagation(); li.classList.toggle("collapsed"); toggle.textContent = li.classList.contains("collapsed") ? "▸" : "▾"; };
+    row.append(toggle, node.name || "(unnamed)");
+    if (node.shape) {
+      const shape = model.shapes[node.shape];
+      const extra = document.createElement("span");
+      extra.className = "count";
+      extra.textContent = shape.copies > 1 ? ` ×${shape.copies}` : "";
+      row.append(extra);
+    }
+    row.onclick = () => select(node.id === selected ? null : node.id);
+    li.append(row);
+    if (kids.length) li.append(buildTree(node.id));
+    ul.append(li);
+  }
+  return ul;
+}
+document.getElementById("treeRoot").append(buildTree(null));
+
+function revealInTree(id) {
+  const row = document.querySelector(`#tree li > div[data-id="${id}"]`);
+  for (let li = row.parentElement; li; li = li.parentElement.closest("li")) {
+    li.classList.remove("collapsed");
+    li.querySelector(":scope > div > .toggle").textContent = childrenOf(li.querySelector(":scope > div").dataset.id).length ? "▾" : "";
+  }
+  row.scrollIntoView({ block: "nearest" });
+}
+
+// ---- info panel -----------------------------------------------------------
+function showInfo(id) {
+  const info = document.getElementById("info");
+  if (!id) {
+    info.innerHTML = `<h2>Nothing selected</h2><p class="dim">${model.nodes.length} nodes, ${Object.keys(model.shapes).length} unique shapes</p>`;
+    return;
+  }
+  const node = byId.get(id);
+  const rows = [["path", node.path.map(p => p || "(unnamed)").join(" › ")]];
+  if (node.shape) {
+    const s = model.shapes[node.shape];
+    const faces = Object.entries(s.faces).filter(([, n]) => n).map(([k, n]) => `${k} ${n}`).join(", ");
+    rows.push(
+      ["shape", `${s.name || "(unnamed)"} <span class="dim">(${node.shape}, ${s.copies} ${s.copies === 1 ? "copy" : "copies"})</span>`],
+      ["size", s.size.map(v => fmt(v)).join(" × ") + " mm"],
+      ["volume", fmt(s.volume) + " mm³"],
+      ["area", fmt(s.area) + " mm²"],
+      ["faces", faces],
+      ["colour", node.color ? `<span style="color:${node.color}">■</span> ${node.color}` : "none"],
+      ["fingerprint", `<code>${s.fingerprint}</code>`],
+    );
+  } else {
+    rows.push(["group", `${descendants(id).length - 1} nodes inside`]);
+  }
+  const pos = node.world.slice(12, 15).map(v => fmt(v)).join(", ");
+  rows.push(["position", `(${pos}) mm`]);
+  info.innerHTML = `<h2>${node.name || "(unnamed)"}</h2><table>` +
+    rows.map(([k, v]) => `<tr><td>${k}</td><td>${v}</td></tr>`).join("") + "</table>";
+}
+showInfo(null);
+</script>
+</body>
+</html>
