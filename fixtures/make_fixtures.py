@@ -6,6 +6,7 @@ Writes three files next to this script:
   drone.step       quadcopter with named subassemblies, colours and true instances
   drone_flat.step  the same parts, all directly under the root (no subassemblies)
   bracket.step     a single part
+  bracket_inch.step  the same part, with the file declaring inches instead of mm
 
 Repeated parts (arms, motors, propellers, screws, ...) reuse the *same* CadQuery
 object, which makes CadQuery write the geometry once and reference it from every
@@ -103,10 +104,12 @@ def make_battery() -> cq.Workplane:
 
 
 def make_bracket() -> cq.Workplane:
-    # An L-bracket with two holes: a typical single part.
+    # An L-bracket with a hole in each leg: a typical single part.
     profile = cq.Workplane("XZ").polyline([(0, 0), (40, 0), (40, 4), (4, 4), (4, 30), (0, 30)])
     solid = profile.close().extrude(-20)
-    return solid.faces("<Z").workplane().pushPoints([(25, 10)]).hole(5)
+    base_hole = cq.Workplane().center(25, 10).circle(2.5).extrude(4)
+    upright_hole = cq.Workplane("YZ").center(10, 20).circle(2.5).extrude(4)
+    return solid.cut(base_hole).cut(upright_hole)
 
 
 # ---------- the drone tree ----------
@@ -233,7 +236,9 @@ def write_step(assy: cq.Assembly, path: Path) -> None:
     write_doc(doc, path)
 
 
-def write_single_part(shape: cq.Workplane, name: str, color: str, path: Path) -> None:
+def write_single_part(
+    shape: cq.Workplane, name: str, color: str, path: Path, unit: str = "MM"
+) -> None:
     """A file with one named part and no assembly at all."""
     doc = TDocStd_Document(TCollection_ExtendedString("XmlXCAF"))
     XCAFApp_Application.GetApplication_s().InitDocument(doc)
@@ -241,11 +246,11 @@ def write_single_part(shape: cq.Workplane, name: str, color: str, path: Path) ->
     TDataStd_Name.Set_s(label, TCollection_ExtendedString(name))
     colors = XCAFDoc_DocumentTool.ColorTool_s(doc.Main())
     colors.SetColor(label, cq.Color(color).wrapped.GetRGB(), XCAFDoc_ColorType.XCAFDoc_ColorGen)
-    write_doc(doc, path)
+    write_doc(doc, path, unit)
 
 
-def write_doc(doc: TDocStd_Document, path: Path) -> None:
-    Interface_Static.SetCVal_s("write.step.unit", "MM")
+def write_doc(doc: TDocStd_Document, path: Path, unit: str = "MM") -> None:
+    Interface_Static.SetCVal_s("write.step.unit", unit)
     writer = STEPCAFControl_Writer()
     writer.SetColorMode(True)
     writer.SetNameMode(True)
@@ -294,7 +299,10 @@ def main() -> None:
     write_step(to_assembly(flat), HERE / "drone_flat.step")
     check_instancing(HERE / "drone_flat.step", count_unique(parts), len(parts))
 
-    write_single_part(make_bracket(), "Bracket", "#7f8c8d", HERE / "bracket.step")
+    bracket = make_bracket()
+    write_single_part(bracket, "Bracket", "#7f8c8d", HERE / "bracket.step")
+    # Same part, but the file declares inches: importers must convert it to mm.
+    write_single_part(bracket, "Bracket", "#7f8c8d", HERE / "bracket_inch.step", unit="INCH")
     print(f"wrote {len(parts)} parts ({count_unique(parts)} unique) and bracket.step")
 
 
