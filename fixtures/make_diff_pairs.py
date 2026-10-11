@@ -45,7 +45,13 @@ from make_fixtures import (
     write_doc,
     write_step,
 )
-from OCP.gp import gp_Trsf, gp_Vec
+from OCP.Bnd import Bnd_Box
+from OCP.BRepAlgoAPI import BRepAlgoAPI_Cut
+from OCP.BRepBndLib import BRepBndLib
+from OCP.BRepGProp import BRepGProp
+from OCP.BRepPrimAPI import BRepPrimAPI_MakeCylinder
+from OCP.gp import gp_Ax2, gp_Dir, gp_Pnt, gp_Trsf, gp_Vec
+from OCP.GProp import GProp_GProps
 from OCP.IFSelect import IFSelect_RetDone
 from OCP.STEPCAFControl import STEPCAFControl_Reader
 from OCP.TCollection import TCollection_ExtendedString
@@ -53,6 +59,7 @@ from OCP.TDataStd import TDataStd_Name
 from OCP.TDF import TDF_Label, TDF_LabelSequence
 from OCP.TDocStd import TDocStd_Document
 from OCP.TopLoc import TopLoc_Location
+from OCP.TopoDS import TopoDS_Shape
 from OCP.XCAFDoc import XCAFDoc_DocumentTool, XCAFDoc_Location, XCAFDoc_ShapeTool
 
 TAGS = ("added", "removed", "moved", "renamed", "modified", "re-parented")
@@ -387,15 +394,15 @@ def placements(doc: TDocStd_Document) -> list[Placement]:
     return found
 
 
-def pick_targets(doc: TDocStd_Document) -> list[Key]:
-    """Keys of the parts to rename, move and delete: sorted, so reruns agree.
+def editable_parts(doc: TDocStd_Document) -> list[Placement]:
+    """The parts generic mode may edit, in key order so reruns agree.
 
     Only parts that are the *last* of their same-named siblings qualify, so
     renaming or deleting one never shifts another node's "#k" index; blank
     names are skipped too. So are parts inside a subassembly whose definition
     is placed more than once: editing one of those edits every copy.
     """
-    usable: list[Key] = []
+    usable: list[Placement] = []
     skipped = 0
     for p in placements(doc):
         if not p.is_leaf:
@@ -406,13 +413,38 @@ def pick_targets(doc: TDocStd_Document) -> list[Key]:
         name = name_of(p.label)
         is_last = p.index == p.sibling_names.count(name) - 1
         if is_last and all(p.key):
-            usable.append(p.key)
+            usable.append(p)
     if skipped:
         print(f"  skipped {skipped} parts inside subassemblies that are placed more than once")
-    usable.sort()
+    return sorted(usable, key=lambda p: p.key)
+
+
+def pick_targets(doc: TDocStd_Document) -> list[Key]:
+    """Keys of the parts to rename, move and delete."""
+    usable = [p.key for p in editable_parts(doc)]
     if not usable:
         return []
     return [usable[i % len(usable)] for i in range(3)]
+
+
+def pick_largest(doc: TDocStd_Document) -> Key | None:
+    """Key of the editable part with the most volume: the one to drill."""
+    usable = editable_parts(doc)
+    if not usable:
+        return None
+    return max(usable, key=lambda p: volume_of(definition_shape(p.label))).key
+
+
+def definition_shape(label: TDF_Label) -> TopoDS_Shape:
+    definition = TDF_Label()
+    XCAFDoc_ShapeTool.GetReferredShape_s(label, definition)
+    return XCAFDoc_ShapeTool.GetShape_s(definition)
+
+
+def volume_of(shape: TopoDS_Shape) -> float:
+    props = GProp_GProps()
+    BRepGProp.VolumeProperties_s(shape, props)
+    return props.Mass()
 
 
 def placement(doc: TDocStd_Document, key: Key) -> Placement:
@@ -450,11 +482,44 @@ def xcaf_delete(doc: TDocStd_Document, key: Key, expected: Expected) -> None:
     expected.removed.append(key)
 
 
+def xcaf_drill(doc: TDocStd_Document, key: Key, expected: Expected) -> None:
+    """A small hole through the part, along its thinnest direction, through the
+    middle of its bounding box (or off-centre if the middle is already empty)."""
+    tool = XCAFDoc_DocumentTool.ShapeTool_s(doc.Main())
+    label, definition = placement(doc, key).label, TDF_Label()
+    XCAFDoc_ShapeTool.GetReferredShape_s(label, definition)
+    shape = XCAFDoc_ShapeTool.GetShape_s(definition)
+    box = Bnd_Box()
+    BRepBndLib.Add_s(shape, box, False)
+    low, high = np.array(box.CornerMin().Coord()), np.array(box.CornerMax().Coord())
+    sides, centre = high - low, (low + high) / 2
+    axis = int(np.argmin(sides))
+    radius = max(0.5, 0.05 * min(np.delete(sides, axis)))
+    before = volume_of(shape)
+    direction = np.eye(3)[axis]
+    for offset in (0.0, 0.25, -0.25):  # fraction of the longest side, along it
+        start = centre + offset * sides.max() * np.eye(3)[int(np.argmax(sides))]
+        start -= direction * sides[axis]
+        cylinder = BRepPrimAPI_MakeCylinder(
+            gp_Ax2(gp_Pnt(*start), gp_Dir(*direction)), radius, 3 * sides[axis]
+        ).Shape()
+        drilled = BRepAlgoAPI_Cut(shape, cylinder).Shape()
+        delta = volume_of(drilled) - before
+        if delta < -0.001 * before:
+            break
+    else:
+        raise SystemExit(f"{' / '.join(key)}: could not find material to drill")
+    tool.SetShape(definition, drilled)
+    tool.UpdateAssemblies()
+    expected.change(key, key, "modified", volume=delta)
+
+
 def make_pairs(step: Path, out_dir: Path) -> list[str]:
-    """no-change, move, delete and rename pairs for any STEP file. Returns the pair names."""
+    """no-change, move, delete, rename and modify pairs for any STEP file; returns their names."""
     out_dir.mkdir(parents=True, exist_ok=True)
     shutil.copy(step, out_dir / "v1.step")
-    targets = pick_targets(read_doc(step))
+    doc = read_doc(step)
+    targets, largest = pick_targets(doc), pick_largest(doc)
     plan: list[tuple[str, str, Callable | None, Key | None]] = [
         ("nochange", "v1 re-exported through the same writer, nothing else changed", None, None)
     ]
@@ -464,6 +529,7 @@ def make_pairs(step: Path, out_dir: Path) -> list[str]:
             ("rename", f"{' / '.join(rename)} renamed", xcaf_rename, rename),
             ("move", f"{' / '.join(move)} moved 5 mm along x", xcaf_move, move),
             ("delete", f"{' / '.join(delete)} deleted", xcaf_delete, delete),
+            ("modify", f"small hole drilled through {' / '.join(largest)}", xcaf_drill, largest),
         ]
     else:
         print(f"{step.name}: no placed parts to move, rename or delete; writing nochange only")
