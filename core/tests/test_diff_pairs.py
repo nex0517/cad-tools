@@ -69,7 +69,7 @@ def test_swap_is_two_renames_and_renamed_is_only_renames() -> None:
 )
 def test_generic_mode_works_on_any_file(source: Path, tmp_path: Path) -> None:
     changes = make_pairs(source, tmp_path / "out")
-    assert changes == ["nochange", "rename", "move", "delete"]
+    assert changes == ["nochange", "rename", "move", "delete", "modify"]
     v1 = import_pair_file(tmp_path / "out", "v1.step", tmp_path)
     for change in changes:
         expected = json.loads((tmp_path / "out" / f"{change}.expected.json").read_text("utf-8"))

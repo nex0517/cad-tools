@@ -133,19 +133,51 @@ until a real file shows it.
 
 ### 3. Detail diff (one pair, on request)
 
+`kyumi diff old.kyumi new.kyumi --detail Drone/Frame/CenterPlate [--out-dir DIR]`
+(`›` works too; the key comes from `diff.json`). It writes `added.glb`,
+`removed.glb` and `detail.json` (volumes, status, the key and both ids).
+
 1. `model.read(shape.brep)` for both, `BRepTools.Read` into `TopoDS_Shape`.
+   A package imported with `--no-breps` gives a clear error saying to
+   re-import without it. A key that was added, removed, or names a group is an
+   error too (exit 1): detail compares one part present in both versions.
 2. Compare in the **part's own frame**: breps are stored untransformed, so use
-   them as-is (no world transform). Placement is already reported by the
-   "moved" tag; applying both world transforms here would turn a 5 mm move into
-   fake added/removed material and hide the real edit. If the shape's local
-   origin changed between versions (part re-exported), align by centre of mass
-   and sorted principal axes first (`center`, `inertia` from the manifest).
-3. `BRepAlgoAPI_Cut(new, old)` = added material; `Cut(old, new)` = removed.
-   For display, place both results with the **new** world transform.
-4. Mesh both with `core`'s `mesh_glb`, write them next to the diff as
-   `added.glb` / `removed.glb`.
-5. Booleans can fail on near-coincident faces; wrap with a fuzzy value
-   (`SetFuzzyValue(0.001)`) and report "could not compute" rather than crash.
+   them as-is. Placement is already reported by the "moved" tag; applying the
+   world transforms here would turn a 5 mm move into fake added/removed
+   material and hide the real edit. A part that only moved gives nothing on
+   either side.
+3. `BRepAlgoAPI_Cut(new, old)` = added material; `Cut(old, new)` = removed,
+   both with `SetFuzzyValue(0.001)`.
+4. **Alignment, only when needed.** A real edit moves the centre of mass too
+   (the hole pair's centre shifts), so aligning by centre first would create
+   fake slivers. Compare as-is first; only if the result is implausible
+   (added + removed > 2·|ΔV| + 0.1 % of the part's volume — a brep re-exported
+   about a new origin "adds" and "removes" nearly the whole part) try moving
+   the old brep onto the new one: centre of mass alone, then centre + principal
+   axes. Axes are ambiguous (sign flips always; order too when two moments are
+   within 1 %), so every proper rotation among those is tried and the first
+   plausible one, else the smallest total, is kept; `detail.json` says
+   `"aligned": true`.
+5. Both results stay in the **new part's own frame**, exactly like
+   `meshes/*.glb`, and `detail.json` carries `new_id`: the viewer (step 4)
+   places them with that node's world transform, the same way as every other
+   mesh. (The earlier idea, baking in the new world transform, would make these
+   two files behave differently from every other mesh.) Empty results write no
+   `.glb`; the file entry is `null`.
+6. Booleans fail on near-coincident faces; a failed one gives status
+   `"could not compute"` (exit 0), never a crash of the whole diff. Every real
+   shape is also compared against *itself* in `core/real_files.py` — the case
+   where every face coincides — and the empty / non-empty / failed counts go
+   into `docs/real-files.md`.
+
+Breps decision (CPT17, 316 shapes: import 44.5 s with breps, 27 s without;
+12.9 MB with, see `docs/real-files.md` for the size without): **(a) keep breps
+on by default, `--no-breps` to skip**, with the clear error above when a detail
+diff needs them. Rejected: (b) off by default — then every first `--detail`
+costs a re-import; (c) building breps on demand from `model.step` inside the
+package — that re-reads the whole STEP, ~27 s per package on CPT17, for one
+part. Our importer is test scaffolding (Kyumi has its own loader), so ~15 s
+more on import does not matter.
 
 ### 4. Output
 
@@ -172,7 +204,9 @@ the two directly. `kyumi diff old.kyumi new.kyumi [-o diff.json]` prints the
 match rate (parts of the old model that found a partner), the summary and one
 line per change (`moved  Drone › Propulsion › Motor_FR  by 5.0 mm`). If the two
 packages were written by different generator versions it warns that
-fingerprints may not be comparable.
+fingerprints may not be comparable. `--detail KEY` adds the detail diff of one
+part (section 3): `detail  Drone › Frame › CenterPlate: added 0.0 mm³, removed 37.7 mm³`
+plus the files it wrote.
 The viewer gets a diff mode: load both packages, colour added parts green,
 removed red (ghosted), moved blue, modified orange; the tree shows tags.
 
@@ -195,8 +229,9 @@ removed red (ghosted), moved blue, modified orange; the tree shows tags.
    moved from `Frame` into `Electronics` with its world position kept (its
    local transform changes; expected: `re-parented` only). The same script run on any STEP file
    (`python fixtures/make_diff_pairs.py fixtures/real/x.step`) writes
-   no-change / move / delete / rename pairs with expected answers into
-   `fixtures/real/pairs/x/`.
+   no-change / move / delete / rename / modify pairs with expected answers into
+   `fixtures/real/pairs/x/` (modify = a small hole through the largest editable
+   part, so `--detail` has a known volume to hit on real files).
 2. **Matching + classification** (`diff/match.py`, `diff/classify.py`) and
    `kyumi diff`, using only the `Model` API. All pairs from step 1 produce
    their expected output. **Not done until it has also run on the real v1/v2
@@ -207,7 +242,11 @@ removed red (ghosted), moved blue, modified orange; the tree shows tags.
    reproduce their expected answer; the renamed pair matches 31/31 parts;
    5,022 parts (the drone tiled 162 times) diff in ~2.5 s.
 3. **Detail diff** for one pair, including the fuzzy-boolean fallback.
-   (~0.5 session.)
+   (~0.5 session.) **Built:** `diff/kyumi_diff/detail.py`, `kyumi diff --detail`;
+   hole = 37.7 mm³ removed and nothing added, resize = +10,422.7 mm³ added and
+   nothing removed, moved/rotated parts give nothing; a re-exported brep is
+   aligned first. Not done until the CPT17 modify pair and the self-comparison
+   of all 316 shapes pass on a real machine (`core/real_files.py`).
 4. **Viewer diff mode.** (~0.5 session.)
 
 Rough total: 3 sessions of work, plus review turnarounds.
@@ -250,9 +289,8 @@ shapes, 20 distinct geometries — `drone_messy` in real life); eight identical
 `LegUnit` groups share one name, and inside each, 8 × `Clamp (3.3535)` etc.
 share name, parent and geometry; `Blade5 (Cfrp or equivalent)` appears twice
 per leg with *different* sizes. Import 44.5 s on Windows, of which writing
-breps is 15.4 s (`--no-breps`: 27 s). Decide in step 3 whether breps become
-optional or are built only for the shapes a detail diff asks about; until
-then real files are imported with `--no-breps`.
+breps is 15.4 s (`--no-breps`: 27 s). Decided in step 3 (section 3): breps
+stay on by default; `--no-breps` is for runs that will never need `--detail`.
 
 ## Risks
 
