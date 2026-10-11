@@ -1,7 +1,9 @@
 # kyumi core
 
 Turns a STEP file into a `.kyumi` package (see [../docs/format.md](../docs/format.md))
-and shows it in a browser.
+and shows it in a browser. It is test scaffolding for `diff/` and `categorize/`
+(kyumi has its own loader and viewer); those two read models only through
+`load()` and the `Model` API, never the zip.
 
 ## Install
 

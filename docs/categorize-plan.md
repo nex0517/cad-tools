@@ -199,7 +199,8 @@ anyone trusts the numbers.
 
 ## What I need from core
 
-All available today in `core`:
+Everything through `load()` and the `Model` API — categorize never opens the
+zip itself, so it can later run on kyumi's own loader. All available today:
 
 - `load(path) -> Model`; per shape `name` exactly as in the file, `size`,
   `faces`, `volume`, `area`, `color`, `solids`, `fingerprint`, `mesh`.
