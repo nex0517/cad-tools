@@ -148,7 +148,7 @@ def match_groups(
         taken_old.add(best)
         old_of_new[group.id] = best
     for group in sorted(new.groups, key=lambda g: new.depth[g.id]):  # parents first
-        if group.id in old_of_new.values():
+        if group.id in old_of_new:
             continue
         o_parent = None if group.parent is None else old_of_new.get(group.parent)
         if group.parent is not None and o_parent is None:

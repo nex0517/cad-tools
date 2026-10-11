@@ -75,6 +75,25 @@ def test_renamed_pair_matches_every_part_without_names(cache: Path) -> None:
     }
 
 
+def test_an_unchanged_empty_group_matches_even_when_its_id_collides(cache: Path) -> None:
+    v1 = imported(PAIRS / "v1.step", cache)
+    group = next(n for n in v1.nodes if n.shape is None and n.parent is not None)
+    spare = replace(group, id="spare", name="Spare")
+    a = replace(v1, nodes=[*v1.nodes, spare])
+    assert not any(diff(a, a).summary.values())
+    # Ids are only unique within one package: in b the empty group reuses `group`'s id.
+    renumbered = [
+        replace(n, id="renumbered")
+        if n is group
+        else replace(n, parent="renumbered")
+        if n.parent == group.id
+        else n
+        for n in v1.nodes
+    ]
+    b = replace(v1, nodes=[*renumbered, replace(spare, id=group.id)])
+    assert not any(diff(a, b).summary.values())
+
+
 def test_a_part_moved_far_beyond_the_grid_is_still_one_move(cache: Path) -> None:
     v1 = imported(PAIRS / "v1.step", cache)
     motor = next(n for n in v1.nodes if n.name == "Motor_FR")
@@ -160,7 +179,9 @@ def test_different_or_missing_generator_versions_print_a_warning(
     v1 = imported(PAIRS / "v1.step", cache)
     assert v1.generator == {"name": "kyumi-core", "version": "0.1.0"}
     diff(v1, replace(v1, generator={"name": "kyumi-core", "version": "9.9.9"}))
-    assert "different generator versions" in capsys.readouterr().err
+    assert "different generators or versions" in capsys.readouterr().err
+    diff(v1, replace(v1, generator={"name": "other-tool", "version": "0.1.0"}))
+    assert "different generators or versions" in capsys.readouterr().err
     diff(replace(v1, generator=None), v1)
     assert "'modified' results could be false" in capsys.readouterr().err
     diff(v1, v1)
