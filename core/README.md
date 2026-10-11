@@ -31,8 +31,19 @@ kyumi info drone.kyumi                            # the parts tree, copy counts,
 kyumi view drone.kyumi                            # 3D viewer in the browser (Ctrl+C to stop)
 ```
 
-`kyumi import --no-breps` skips the exact geometry files (`breps/`), which diff
-needs but the viewer does not.
+`kyumi import --no-breps` skips the exact geometry files (`breps/`), which
+`kyumi diff --detail` needs but the viewer does not.
+
+With the `diff/` package installed (`pip install -e diff`):
+
+```sh
+kyumi diff v1.kyumi v2.kyumi -o diff.json                  # what changed, by part
+kyumi diff v1.kyumi v2.kyumi --detail Drone/Frame/CenterPlate   # added/removed material of one part
+```
+
+`--detail` writes `detail/added.glb`, `detail/removed.glb` and `detail/detail.json`
+(`--out-dir` to put them elsewhere); the key is the part's line from the diff,
+typed with `/` between the names.
 
 From Python:
 

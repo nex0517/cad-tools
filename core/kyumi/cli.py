@@ -38,6 +38,17 @@ def main(argv: list[str] | None = None) -> None:
     dif.add_argument("old", type=Path)
     dif.add_argument("new", type=Path)
     dif.add_argument("-o", "--out", type=Path, help="also write diff.json here")
+    dif.add_argument(
+        "--detail",
+        metavar="KEY",
+        help="also compute the material added/removed in one part, e.g. Drone/Frame/CenterPlate",
+    )
+    dif.add_argument(
+        "--out-dir",
+        type=Path,
+        default=Path("detail"),
+        help="where --detail writes (default: detail/)",
+    )
 
     args = parser.parse_args(argv)
     try:
@@ -48,20 +59,30 @@ def main(argv: list[str] | None = None) -> None:
         elif args.command == "view":
             serve(load(args.kyumi), args.port, not args.no_browser)
         elif args.command == "diff":
-            run_diff(args.old, args.new, args.out)
+            run_diff(args.old, args.new, args.out, args.detail, args.out_dir)
     except (UnreadableFile, ValueError) as error:
         sys.exit(f"error: {error}")
 
 
-def run_diff(old: Path, new: Path, out: Path | None) -> None:
+def run_diff(
+    old: Path,
+    new: Path,
+    out: Path | None,
+    detail: str | None = None,
+    out_dir: Path = Path("detail"),
+) -> None:
     if kyumi_diff is None:
         raise ValueError("kyumi diff needs the diff package: pip install -e diff")
     if out is not None and out.resolve() in (old.resolve(), new.resolve()):
         raise ValueError(f"-o {out} would overwrite an input package")
-    result = kyumi_diff.diff(load(old), load(new))
+    old_model, new_model = load(old), load(new)
+    result = kyumi_diff.diff(old_model, new_model)
     print(kyumi_diff.render_text(result))
     if out:
         out.write_text(kyumi_diff.to_json(result), encoding="utf-8")
+    if detail is not None:
+        found = kyumi_diff.detail(old_model, new_model, result, kyumi_diff.parse_key(detail))
+        print(kyumi_diff.render_detail(found, kyumi_diff.write_detail(found, out_dir)))
 
 
 def run_import(step: Path, out: Path, breps: bool) -> None:

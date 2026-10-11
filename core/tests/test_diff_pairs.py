@@ -15,7 +15,20 @@ from make_diff_pairs import (
     read_doc,
     verify,
 )
-from make_fixtures import drone_tree, flatten, overlaps, shared_tree
+from make_fixtures import (
+    at,
+    drone_tree,
+    flatten,
+    name_of,
+    overlaps,
+    restore_blank_names,
+    shared_tree,
+    write_doc,
+)
+from OCP.TCollection import TCollection_ExtendedString
+from OCP.TDataStd import TDataStd_Name
+from OCP.TDF import TDF_Label, TDF_LabelSequence
+from OCP.XCAFDoc import XCAFDoc_DocumentTool, XCAFDoc_ShapeTool
 
 from tests.conftest import FIXTURES, PAIRS
 
@@ -69,7 +82,7 @@ def test_swap_is_two_renames_and_renamed_is_only_renames() -> None:
 )
 def test_generic_mode_works_on_any_file(source: Path, tmp_path: Path) -> None:
     changes = make_pairs(source, tmp_path / "out")
-    assert changes == ["nochange", "rename", "move", "delete"]
+    assert changes == ["nochange", "rename", "move", "delete", "modify"]
     v1 = import_pair_file(tmp_path / "out", "v1.step", tmp_path)
     for change in changes:
         expected = json.loads((tmp_path / "out" / f"{change}.expected.json").read_text("utf-8"))
@@ -97,6 +110,39 @@ def test_parts_inside_a_twice_placed_subassembly_are_never_picked(capsys) -> Non
     assert ["Drone", "ArmUnit", "Motor"] in keys and ["Drone", "ArmUnit#1", "Motor"] in keys
     assert pick_targets(doc) == [["Drone", "CenterPlate"]] * 3
     assert "skipped 10 parts" in capsys.readouterr().out
+
+
+def test_a_part_placed_twice_is_never_drilled(tmp_path: Path, capsys) -> None:
+    """drone_flat with a second placement of the Battery's definition: drilling the
+    Battery (the largest part) would drill both copies, so modify takes the next one."""
+    doc = read_doc(FIXTURES / "drone_flat.step")
+    tool = XCAFDoc_DocumentTool.ShapeTool_s(doc.Main())
+    roots, top = TDF_LabelSequence(), TDF_Label()
+    tool.GetFreeShapes(roots)
+    if not XCAFDoc_ShapeTool.GetReferredShape_s(roots.Value(1), top):
+        top = roots.Value(1)
+    components = TDF_LabelSequence()
+    tool.GetComponents_s(top, components)
+    battery = next(
+        components.Value(i)
+        for i in range(1, components.Length() + 1)
+        if name_of(components.Value(i)) == "Battery"
+    )
+    definition = TDF_Label()
+    XCAFDoc_ShapeTool.GetReferredShape_s(battery, definition)
+    second = tool.AddComponent(top, definition, at(300, 0, 0).wrapped)
+    TDataStd_Name.Set_s(second, TCollection_ExtendedString("Battery"))
+    tool.UpdateAssemblies()
+    write_doc(doc, tmp_path / "twice.step")
+    restore_blank_names(tmp_path / "twice.step")
+
+    changes = make_pairs(tmp_path / "twice.step", tmp_path / "out")
+    assert "modify" in changes and "not drilling" in capsys.readouterr().out
+    expected = json.loads((tmp_path / "out" / "modify.expected.json").read_text("utf-8"))
+    assert expected["changes"][0]["new"][1] not in ("Battery", "Battery#1")
+    v1 = import_pair_file(tmp_path / "out", "v1.step", tmp_path)
+    v2 = import_pair_file(tmp_path / "out", "modify.step", tmp_path)
+    verify(v1, v2, expected)
 
 
 def test_single_part_file_gets_only_the_nochange_pair(tmp_path: Path) -> None:
