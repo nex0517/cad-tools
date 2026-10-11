@@ -174,14 +174,22 @@ until a real file shows it.
    where every face coincides — and the empty / non-empty / failed counts go
    into `docs/real-files.md`.
 
-Breps decision (CPT17, 316 shapes: import 44.5 s with breps, 27 s without;
-12.9 MB with, see `docs/real-files.md` for the size without): **(a) keep breps
-on by default, `--no-breps` to skip**, with the clear error above when a detail
-diff needs them. Rejected: (b) off by default — then every first `--detail`
-costs a re-import; (c) building breps on demand from `model.step` inside the
-package — that re-reads the whole STEP, ~27 s per package on CPT17, for one
-part. Our importer is test scaffolding (Kyumi has its own loader), so ~15 s
-more on import does not matter.
+Timings on CPT17 (`docs/real-files.md`): the modify pair's `--detail` on the
+largest part takes 3.0 s, but a self-comparison of every shape takes 255 s for
+316 shapes and the slowest, `Blade2 (Cfrp or equivalent)`, 26.7 s on its own.
+Largest by volume is not slowest: detail time depends on surface complexity
+(curved blade faces), not size. For step 4: the viewer must not compute a
+detail on click; details are computed ahead (`kyumi diff --detail`, or a
+batch for every `modified` part) and the viewer only loads the files.
+
+Breps decision (CPT17, 316 shapes: import 47.6 s with breps, 32.5 s without,
++15 s / +46 %; 12.9 MB with, 9.8 MB without, +3.1 MB): **(a) keep breps on by
+default, `--no-breps` to skip**, with the clear error above when a detail diff
+needs them. Rejected: (b) off by default — then every first `--detail` costs a
+re-import; (c) building breps on demand from `model.step` inside the package —
+that re-reads the whole STEP, ~32 s per package on CPT17, so ~65 s per
+`--detail` request, for one part. Our importer is test scaffolding (Kyumi has
+its own loader), so 15 s more on import does not matter.
 
 ### 4. Output
 
@@ -252,7 +260,8 @@ removed red (ghosted), moved blue, modified orange; the tree shows tags.
    nothing removed, moved/rotated parts give nothing; a re-exported brep is
    aligned first. Not done until the CPT17 modify pair and the self-comparison
    of all 316 shapes pass on a real machine (`core/real_files.py`).
-4. **Viewer diff mode.** (~0.5 session.)
+4. **Viewer diff mode.** (~0.5 session.) Loads precomputed `detail/` files only;
+   never runs a detail diff on click (a single shape can take 27 s, section 3).
 
 Rough total: 3 sessions of work, plus review turnarounds.
 
@@ -293,9 +302,11 @@ CPT17 (335 nodes, 316 leaves, depth 4): every copy is its own shape (316
 shapes, 20 distinct geometries — `drone_messy` in real life); eight identical
 `LegUnit` groups share one name, and inside each, 8 × `Clamp (3.3535)` etc.
 share name, parent and geometry; `Blade5 (Cfrp or equivalent)` appears twice
-per leg with *different* sizes. Import 44.5 s on Windows, of which writing
-breps is 15.4 s (`--no-breps`: 27 s). Decided in step 3 (section 3): breps
-stay on by default; `--no-breps` is for runs that will never need `--detail`.
+per leg with *different* sizes. Import 47.6 s on Windows with breps, 32.5 s
+without (12.9 MB / 9.8 MB). Decided in step 3 (section 3): breps stay on by
+default; `--no-breps` is for runs that will never need `--detail`. Detail diff
+of the largest part: 3.0 s, volume within 1 %; every shape against itself: all
+316 empty, 255 s in total, slowest `Blade2 (Cfrp or equivalent)` at 26.7 s.
 
 ## Risks
 
