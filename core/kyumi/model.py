@@ -59,6 +59,7 @@ class Model:
     shapes: dict[str, Shape]
     nodes: list[Node]
     path: Path | None = None  # the .kyumi this came from, so meshes/breps can be read
+    generator: dict[str, str] | None = None  # manifest "generator": who wrote the file
 
     def node(self, node_id: str) -> Node:
         return next(n for n in self.nodes if n.id == node_id)

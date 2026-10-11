@@ -1,4 +1,4 @@
-"""Command line: kyumi import | info | view."""
+"""Command line: kyumi import | info | view | diff."""
 
 from __future__ import annotations
 
@@ -10,6 +10,11 @@ from kyumi.model import Model, Node
 from kyumi.package import import_step, load
 from kyumi.reader import UnreadableFile
 from kyumi.viewer import serve
+
+try:
+    import kyumi_diff
+except ImportError:  # the diff/ package is installed separately: pip install -e diff
+    kyumi_diff = None
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -29,6 +34,11 @@ def main(argv: list[str] | None = None) -> None:
     view.add_argument("--port", type=int, default=8765, help="0 picks a free port")
     view.add_argument("--no-browser", action="store_true", help="just print the URL")
 
+    dif = commands.add_parser("diff", help="what changed between two .kyumi packages")
+    dif.add_argument("old", type=Path)
+    dif.add_argument("new", type=Path)
+    dif.add_argument("-o", "--out", type=Path, help="also write diff.json here")
+
     args = parser.parse_args(argv)
     try:
         if args.command == "import":
@@ -37,8 +47,19 @@ def main(argv: list[str] | None = None) -> None:
             print_info(load(args.kyumi))
         elif args.command == "view":
             serve(load(args.kyumi), args.port, not args.no_browser)
+        elif args.command == "diff":
+            run_diff(args.old, args.new, args.out)
     except (UnreadableFile, ValueError) as error:
         sys.exit(f"error: {error}")
+
+
+def run_diff(old: Path, new: Path, out: Path | None) -> None:
+    if kyumi_diff is None:
+        raise ValueError("kyumi diff needs the diff package: pip install -e diff")
+    result = kyumi_diff.diff(load(old), load(new))
+    print(kyumi_diff.render_text(result))
+    if out:
+        out.write_text(kyumi_diff.to_json(result), encoding="utf-8")
 
 
 def run_import(step: Path, out: Path, breps: bool) -> None:

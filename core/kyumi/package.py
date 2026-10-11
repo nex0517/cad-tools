@@ -123,7 +123,8 @@ def load(path: Path | str) -> Model:
     shapes = {sid: Shape(id=sid, **known(Shape, s)) for sid, s in data["shapes"].items()}
     nodes = [Node(**known(Node, n)) for n in data["nodes"]]
     source = data.get("source", {})
-    return Model(source.get("file", ""), source.get("units", "mm"), shapes, nodes, path)
+    units = source.get("units", "mm")
+    return Model(source.get("file", ""), units, shapes, nodes, path, data.get("generator"))
 
 
 def known(cls: type, fields: dict) -> dict:

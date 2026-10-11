@@ -55,10 +55,14 @@ from their children.
 
 **Narrow candidates** so this stays fast on 5,000-part assemblies (comparing
 every pair would be 25 million comparisons). Put every old leaf in three
-dictionaries: by node name, by fingerprint, and by a coarse spatial grid cell
-(world position of the shape's `center`, cell size = 5 % of the model's
-bounding-box diagonal, including the 26 neighbouring cells). A new leaf's
-candidates are the union of the three lookups. Typical candidate count: 1–10.
+dictionaries: by node name, by fingerprint, and by a spatial grid cell (world
+position of the shape's `center`, cell size = the median part's bounding-box
+diagonal, including the 26 neighbouring cells). A new leaf's candidates are the
+union of the three lookups. Typical candidate count: 1–10. Two things keep
+that true on big models: the cell is sized by the *part*, not the model (5 % of
+a 190 m fleet's diagonal would put a whole drone in one cell), and a
+fingerprint shared by more than 64 copies (1,280 identical screws) is no longer
+used as a lookup on its own — those copies are only found through the grid.
 
 **Rule: among parts with the same fingerprint, position beats name.** Two
 identical props that trade places are the *same* props with swapped labels
@@ -67,7 +71,8 @@ earlier draft (node name 0.25 > distance 0.15) the swap pair scored as two
 moves, and no assignment algorithm can fix that, because the scores are wrong,
 not the assignment.
 
-**Score** each candidate pair, 0–1 each, summed with weights:
+**Score** each candidate pair, 0–1 each, summed with weights (`tolerance` in
+the distance term is the grid cell size, so "near" means "within a part"):
 
 | signal | weight | note |
 |---|---|---|
@@ -141,16 +146,23 @@ added and a removed node share a fingerprint, report it as **moved far**
 
 ```json
 {
-  "old": "drone_v1.kyumi", "new": "drone_v2.kyumi",
-  "pairs":   [{"old": "n7", "new": "n9", "score": 0.93, "tags": ["moved"], "delta": {"distance": 5.0}}],
-  "added":   ["n31"],
-  "removed": ["n12"],
-  "summary": {"added": 1, "removed": 1, "moved": 1, "renamed": 0, "modified": 0}
+  "old": "v1.step", "new": "move.step",
+  "keys": "names from the root down; the k-th same-named sibling (k >= 1) is 'Name#k'",
+  "changes": [{"old": ["Drone", "Propulsion", "Motor_FR"], "new": ["Drone", "Propulsion", "Motor_FR"],
+               "tags": ["moved"], "delta": {"distance": 5.0}}],
+  "added":   [],
+  "removed": [["Drone", "Frame", "Screw_3"]],
+  "summary": {"added": 0, "removed": 1, "moved": 1, "renamed": 0, "modified": 0, "re-parented": 0}
 }
 ```
 
-A `kyumi diff old.kyumi new.kyumi [-o diff.json]` command prints the summary
-and one line per change (`moved  Drone › Propulsion › Motor_FL  by 5.0 mm`).
+Nodes are named by key, not id (ids are not stable across files), and the
+file has the same shape as the generated `*.expected.json`, so tests compare
+the two directly. `kyumi diff old.kyumi new.kyumi [-o diff.json]` prints the
+match rate (parts of the old model that found a partner), the summary and one
+line per change (`moved  Drone › Propulsion › Motor_FR  by 5.0 mm`). If the two
+packages were written by different generator versions it warns that
+fingerprints may not be comparable.
 The viewer gets a diff mode: load both packages, colour added parts green,
 removed red (ghosted), moved blue, modified orange; the tree shows tags.
 
@@ -177,7 +189,11 @@ removed red (ghosted), moved blue, modified orange; the tree shows tags.
    `kyumi diff`, using only the `Model` API. All pairs from step 1 produce
    their expected output. **Not done until it has also run on the real v1/v2
    pairs in `fixtures/real/pairs/`** (via `core/real_files.py`, results in
-   `docs/real-files.md`). (~1 session.)
+   `docs/real-files.md`). (~1 session.) **Built:** `diff/` (`kyumi_diff`
+   package: `index`, `match`, `classify`, `report`), `kyumi diff`; every
+   drone pair and the generic pairs from `drone_messy` / `drone_shared`
+   reproduce their expected answer; the renamed pair matches 31/31 parts;
+   5,022 parts (the drone tiled 162 times) diff in ~2.5 s.
 3. **Detail diff** for one pair, including the fuzzy-boolean fallback.
    (~0.5 session.)
 4. **Viewer diff mode.** (~0.5 session.)

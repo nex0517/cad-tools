@@ -18,10 +18,10 @@ jobs:
         with:
           python-version: "3.11"
           cache: pip
-      - run: pip install -e "core[dev]"
-      - run: ruff format --check core fixtures
-      - run: ruff check core fixtures
-      - run: pytest core
+      - run: pip install -e "core[dev]" -e diff
+      - run: ruff format --check core fixtures diff
+      - run: ruff check core fixtures diff
+      - run: pytest core diff
 
   # Plain install, no [dev]: fails if core accidentally imports cadquery.
   import-without-dev:

@@ -1,0 +1,13 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "kyumi-diff"
+version = "0.1.0"
+description = "Compare two .kyumi packages: what was added, removed, moved, renamed, modified"
+requires-python = ">=3.11"
+dependencies = ["kyumi", "numpy"]
+
+[tool.setuptools.packages.find]
+include = ["kyumi_diff*"]
