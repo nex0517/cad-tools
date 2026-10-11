@@ -2,6 +2,7 @@
   "old": "v1.step",
   "new": "add.step",
   "note": "Chip_Extra added to the FlightController (a copy of the Chip shape)",
+  "keys": "names from the root down; the k-th same-named sibling (k >= 1) is 'Name#k'",
   "changes": [],
   "added": [
     [

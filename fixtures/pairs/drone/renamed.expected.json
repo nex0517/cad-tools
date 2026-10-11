@@ -2,6 +2,7 @@
   "old": "v1.step",
   "new": "renamed.step",
   "note": "every node is Part1..PartN, every shape Body1..BodyN",
+  "keys": "names from the root down; the k-th same-named sibling (k >= 1) is 'Name#k'",
   "changes": [
     {
       "old": [

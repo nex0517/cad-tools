@@ -2,6 +2,7 @@
   "old": "v1.step",
   "new": "swap.step",
   "note": "Prop_FL and Prop_FR trade names; positions unchanged (2 renamed)",
+  "keys": "names from the root down; the k-th same-named sibling (k >= 1) is 'Name#k'",
   "changes": [
     {
       "old": [

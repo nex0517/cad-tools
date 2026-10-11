@@ -2,6 +2,7 @@
   "old": "v1.step",
   "new": "rotate.step",
   "note": "Frame group rotated 10 degrees (one move, not thirteen)",
+  "keys": "names from the root down; the k-th same-named sibling (k >= 1) is 'Name#k'",
   "changes": [
     {
       "old": [

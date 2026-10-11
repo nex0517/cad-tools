@@ -1,19 +1,20 @@
 """Generate v1/v2 STEP pairs with one known change each, plus the answer diff must give.
 
 Run from the repo root:
-  python fixtures/make_diff_pairs.py                       ten drone pairs -> fixtures/pairs/drone/
+  python fixtures/make_diff_pairs.py                       drone pairs -> fixtures/pairs/drone/
   python fixtures/make_diff_pairs.py fixtures/real/x.step  four pairs -> fixtures/real/pairs/x/
 
-A pair directory holds `v1.step`, one `<change>.step` per v2, and
-`<change>.expected.json` describing the diff between them, written in terms of
-node *paths* (ids are renumbered on every export, so they are useless across
-files). Everything the generator knows about a model it learns through `load()`
-and the `Model` API, never by opening the .kyumi zip.
+A pair directory holds the v1 file, one `<change>.step` per v2, and
+`<change>.expected.json` describing the diff between them. Nodes are named by
+*key*: the names from the root down, where the k-th sibling with the same name
+(k >= 1) is written "Name#k" (ids are renumbered on every export, so they are
+useless across files). Everything the generator knows about a model it learns
+through `load()` and the `Model` API, never by opening the .kyumi zip.
 
 The drone pairs are built by editing the Python tree in make_fixtures.py, so
 geometry can change (resize, hole, add). Any other STEP file is edited in place
 through OpenCascade's XCAF document: rename, move and delete only, with the
-targets picked deterministically (sorted path) so reruns give the same pairs.
+targets picked deterministically (sorted key) so reruns give the same pairs.
 """
 
 from __future__ import annotations
@@ -23,21 +24,34 @@ import math
 import shutil
 import sys
 import tempfile
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import cadquery as cq
 import numpy as np
-from kyumi import Model, Node, import_step, load
+from kyumi import Model, Node, Shape, import_step, load
 from make_fixtures import (
+    ARM_LENGTH,
+    ARM_THICKNESS,
+    CORNERS,
     HERE,
+    PLATE_SIZE,
+    PLATE_THICKNESS,
+    SCREW_ALONG,
     Group,
     Part,
     Proto,
+    arm_tip,
     at,
     drone_tree,
-    flatten,
+    make_arm,
+    make_motor,
+    make_plate,
+    make_propeller,
+    make_screw,
     name_of,
+    restore_blank_names,
     write_doc,
     write_step,
 )
@@ -52,23 +66,31 @@ from OCP.TopLoc import TopLoc_Location
 from OCP.XCAFDoc import XCAFDoc_DocumentTool, XCAFDoc_Location, XCAFDoc_ShapeTool
 
 TAGS = ("added", "removed", "moved", "renamed", "modified", "re-parented")
+KEY_FORMAT = "names from the root down; the k-th same-named sibling (k >= 1) is 'Name#k'"
 # From docs/diff-plan.md, "Classify": smaller differences than these are not a change.
 POSITION_TOLERANCE = 0.01  # mm
 ANGLE_TOLERANCE = 0.01  # degrees
+MEASUREMENT_TOLERANCE = 0.001  # relative: volume, area or inertia must differ by 0.1 %
+
+Key = list[str]
+
+
+def with_index(name: str, earlier_same_name: int) -> str:
+    return f"{name}#{earlier_same_name}" if earlier_same_name else name
 
 
 @dataclass
 class Expected:
-    """What `kyumi diff v1 v2` must report. Paths are name lists from the root down."""
+    """What `kyumi diff v1 v2` must report."""
 
     old: str
     new: str
     note: str
-    changes: list[dict] = field(default_factory=list)  # {"old": path, "new": path, "tags": [...]}
-    added: list[list[str]] = field(default_factory=list)
-    removed: list[list[str]] = field(default_factory=list)
+    changes: list[dict] = field(default_factory=list)  # {"old": key, "new": key, "tags": [...]}
+    added: list[Key] = field(default_factory=list)
+    removed: list[Key] = field(default_factory=list)
 
-    def change(self, old: list[str], new: list[str], *tags: str, **delta: float) -> None:
+    def change(self, old: Key, new: Key, *tags: str, **delta: float) -> None:
         entry: dict = {"old": old, "new": new, "tags": sorted(tags)}
         if delta:
             entry["delta"] = {k: round(v, 3) for k, v in delta.items()}
@@ -87,6 +109,7 @@ class Expected:
             "old": self.old,
             "new": self.new,
             "note": self.note,
+            "keys": KEY_FORMAT,
             "changes": self.changes,
             "added": self.added,
             "removed": self.removed,
@@ -98,20 +121,22 @@ class Expected:
 # ---------- the drone pairs: edit the Python tree ----------
 
 
-def tree_paths(group: Group, prefix: tuple[str, ...] = ()) -> dict[str, list[str]]:
-    """Name -> path for every node of the tree (drone names are unique)."""
-    path = [*prefix, group.name]
-    paths = {group.name: path}
-    for child in group.children:
+def tree_keys(group: Group, prefix: Key = (), own: str | None = None) -> dict[int, Key]:
+    """id(node) -> key for every node of the tree. Keyed by identity: names can repeat."""
+    key = [*prefix, group.name if own is None else own]
+    keys = {id(group): key}
+    names = [child.name for child in group.children]
+    for i, child in enumerate(group.children):
+        child_key = [*key, with_index(child.name, names[:i].count(child.name))]
         if isinstance(child, Group):
-            paths.update(tree_paths(child, tuple(path)))
+            keys.update(tree_keys(child, key, child_key[-1]))
         else:
-            paths[child.name] = [*path, child.name]
-    return paths
+            keys[id(child)] = child_key
+    return keys
 
 
 def find(group: Group, name: str) -> tuple[Group, Part | Group]:
-    """The node called `name` and the group that holds it."""
+    """The node called `name` and the group that holds it (first match, tree order)."""
     for child in group.children:
         if child.name == name:
             return group, child
@@ -129,28 +154,23 @@ def part(group: Group, name: str) -> Part:
     return found
 
 
-def world_center(tree: Group, name: str) -> np.ndarray:
-    placed = next(p for p in flatten(tree, cq.Location()) if p.name == name)
-    c = placed.proto.shape.val().moved(placed.loc).Center()
-    return np.array([c.x, c.y, c.z])
-
-
 def rename_motor(tree: Group, expected: Expected) -> None:
-    before = tree_paths(tree)
-    part(tree, "Motor_FL").name = "Motor_FrontLeft"
-    expected.change(before["Motor_FL"], tree_paths(tree)["Motor_FrontLeft"], "renamed")
+    motor = part(tree, "Motor_FL")
+    before = tree_keys(tree)[id(motor)]
+    motor.name = "Motor_FrontLeft"
+    expected.change(before, tree_keys(tree)[id(motor)], "renamed")
 
 
 def move_motor(tree: Group, expected: Expected) -> None:
     motor = part(tree, "Motor_FR")
     motor.loc = cq.Location(cq.Vector(0, 0, 5)) * motor.loc  # 5 mm straight up
-    path = tree_paths(tree)["Motor_FR"]
-    expected.change(path, path, "moved", distance=5.0)
+    key = tree_keys(tree)[id(motor)]
+    expected.change(key, key, "moved", distance=5.0)
 
 
 def delete_screw(tree: Group, expected: Expected) -> None:
-    expected.removed.append(tree_paths(tree)["Screw_3"])
     parent, screw = find(tree, "Screw_3")
+    expected.removed.append(tree_keys(tree)[id(screw)])
     parent.children.remove(screw)
 
 
@@ -158,10 +178,9 @@ def add_chip(tree: Group, expected: Expected) -> None:
     board = find(tree, "FlightController")[1]
     assert isinstance(board, Group)
     # Reuse the small chip's geometry: an added *copy* of an existing shape.
-    board.children.append(
-        Part("Chip_Extra", part(tree, "Chip_IMU").proto, at(8, -8, 0.8), "#111111")
-    )
-    expected.added.append(tree_paths(tree)["Chip_Extra"])
+    chip = Part("Chip_Extra", part(tree, "Chip_IMU").proto, at(8, -8, 0.8), "#111111")
+    board.children.append(chip)
+    expected.added.append(tree_keys(tree)[id(chip)])
 
 
 def resize_battery(tree: Group, expected: Expected) -> None:
@@ -169,8 +188,8 @@ def resize_battery(tree: Group, expected: Expected) -> None:
     longer = cq.Workplane().box(85, 35, 30).edges("|X").fillet(3)
     volume_change = longer.val().Volume() - battery.proto.shape.val().Volume()
     battery.proto = Proto("Battery", longer)
-    path = tree_paths(tree)["Battery"]
-    expected.change(path, path, "modified", volume=volume_change)
+    key = tree_keys(tree)[id(battery)]
+    expected.change(key, key, "modified", volume=volume_change)
 
 
 def drill_plate(tree: Group, expected: Expected) -> None:
@@ -178,27 +197,27 @@ def drill_plate(tree: Group, expected: Expected) -> None:
     drilled = plate.proto.shape.faces(">Z").workplane().pushPoints([(0, 30)]).hole(4)
     volume_change = drilled.val().Volume() - plate.proto.shape.val().Volume()
     plate.proto = Proto("CenterPlate", drilled)
-    path = tree_paths(tree)["CenterPlate"]
-    expected.change(path, path, "modified", volume=volume_change)
+    key = tree_keys(tree)[id(plate)]
+    expected.change(key, key, "modified", volume=volume_change)
 
 
 def swap_props(tree: Group, expected: Expected) -> None:
     # Identical copies trade *names* only; each position keeps its geometry and
     # orientation. Position beats name, so diff must call this two renames.
-    before = tree_paths(tree)
     fl, fr = part(tree, "Prop_FL"), part(tree, "Prop_FR")
+    before = tree_keys(tree)
     fl.name, fr.name = "Prop_FR", "Prop_FL"
-    after = tree_paths(tree)
-    expected.change(before["Prop_FL"], after["Prop_FR"], "renamed")
-    expected.change(before["Prop_FR"], after["Prop_FL"], "renamed")
+    after = tree_keys(tree)
+    expected.change(before[id(fl)], after[id(fl)], "renamed")
+    expected.change(before[id(fr)], after[id(fr)], "renamed")
 
 
 def rotate_frame(tree: Group, expected: Expected) -> None:
     frame = find(tree, "Frame")[1]
     frame.loc = at(angle=10) * frame.loc
-    path = tree_paths(tree)["Frame"]
+    key = tree_keys(tree)[id(frame)]
     # One move: the 13 parts inside keep their own transforms.
-    expected.change(path, path, "moved", distance=0.0, angle=10.0)
+    expected.change(key, key, "moved", distance=0.0, angle=10.0)
 
 
 def bake_copies(tree: Group, expected: Expected) -> None:
@@ -217,53 +236,122 @@ def bake_copies(tree: Group, expected: Expected) -> None:
 
 def junk_all_names(tree: Group, expected: Expected) -> None:
     """Every node becomes Part1, Part2, ... (shapes Body1, ...): diff gets no help from names."""
-    before = tree_paths(tree)
-    renamed: dict[str, str] = {}
+    before = tree_keys(tree)
+    count = 0
     protos: dict[int, Proto] = {}
 
     def visit(group: Group) -> None:
-        renamed[group.name] = group.name = f"Part{len(renamed) + 1}"
+        nonlocal count
+        count += 1
+        group.name = f"Part{count}"
         for child in group.children:
             if isinstance(child, Group):
                 visit(child)
             else:
-                renamed[child.name] = child.name = f"Part{len(renamed) + 1}"
+                count += 1
+                child.name = f"Part{count}"
                 child.proto = protos.setdefault(
                     id(child.proto), Proto(f"Body{len(protos) + 1}", child.proto.shape)
                 )
 
     visit(tree)
-    after = tree_paths(tree)
-    for old_name, new_name in renamed.items():
-        expected.change(before[old_name], after[new_name], "renamed")
+    after = tree_keys(tree)
+    for node_id, old_key in before.items():
+        expected.change(old_key, after[node_id], "renamed")
 
 
-DRONE_CHANGES = {
-    "rename": (rename_motor, "Motor_FL renamed to Motor_FrontLeft"),
-    "move": (move_motor, "Motor_FR moved 5 mm up"),
-    "delete": (delete_screw, "Screw_3 deleted"),
-    "add": (add_chip, "Chip_Extra added to the FlightController (a copy of the Chip shape)"),
-    "resize": (resize_battery, "Battery 10 mm longer"),
-    "hole": (drill_plate, "4 mm hole drilled in CenterPlate"),
-    "swap": (swap_props, "Prop_FL and Prop_FR trade names; positions unchanged (2 renamed)"),
-    "rotate": (rotate_frame, "Frame group rotated 10 degrees (one move, not thirteen)"),
-    "baked": (bake_copies, "same drone with every copy baked into its own solid (no change)"),
-    "renamed": (junk_all_names, "every node is Part1..PartN, every shape Body1..BodyN"),
+def arm_units_tree() -> Group:
+    """A drone built from four identical "ArmUnit" groups: same name, same children.
+
+    Like CPT17's eight "LegUnit" groups: names cannot tell the groups apart, only
+    where their children sit can.
+    """
+    plate, arm = Proto("CenterPlate", make_plate()), Proto("Arm", make_arm())
+    motor, prop, screw = (
+        Proto("Motor", make_motor()),
+        Proto("Prop", make_propeller()),
+        Proto("Screw", make_screw()),
+    )
+    arm_start, z = PLATE_SIZE / 2 - 20, ARM_THICKNESS
+    units: list[Part | Group] = [Part("CenterPlate", plate, at(), "#222222")]
+    for angle in CORNERS.values():
+        x, y = arm_tip(angle, arm_start)
+        children: list[Part | Group] = [
+            Part("Arm", arm, at(0, 0, z / 2), "#333333"),
+            Part("Motor", motor, at(ARM_LENGTH - 10, 0, z), "#b0b0b0"),
+            Part("Prop", prop, at(ARM_LENGTH - 10, 0, z + 21), "#ff7a00"),
+        ]
+        children += [
+            Part("Screw", screw, at(along - arm_start, 0, z), "#888888") for along in SCREW_ALONG
+        ]
+        units.append(Group("ArmUnit", at(x, y, PLATE_THICKNESS / 2, angle), children))
+    return Group("Drone", at(), units)
+
+
+def move_third_arm_unit(tree: Group, expected: Expected) -> None:
+    unit = [c for c in tree.children if c.name == "ArmUnit"][2]
+    unit.loc = cq.Location(cq.Vector(0, 0, 5)) * unit.loc
+    key = tree_keys(tree)[id(unit)]  # ["Drone", "ArmUnit#2"]
+    expected.change(key, key, "moved", distance=5.0)
+
+
+@dataclass
+class DronePair:
+    note: str
+    apply: Callable[[Group, Expected], None]
+    base: str = "v1.step"  # the v1 file inside the pair directory
+    tree: Callable[[], Group] = drone_tree
+
+
+DRONE_PAIRS = {
+    "rename": DronePair("Motor_FL renamed to Motor_FrontLeft", rename_motor),
+    "move": DronePair("Motor_FR moved 5 mm up", move_motor),
+    "delete": DronePair("Screw_3 deleted", delete_screw),
+    "add": DronePair(
+        "Chip_Extra added to the FlightController (a copy of the Chip shape)", add_chip
+    ),
+    "resize": DronePair("Battery 10 mm longer", resize_battery),
+    "hole": DronePair("4 mm hole drilled in CenterPlate", drill_plate),
+    "swap": DronePair(
+        "Prop_FL and Prop_FR trade names; positions unchanged (2 renamed)", swap_props
+    ),
+    "rotate": DronePair("Frame group rotated 10 degrees (one move, not thirteen)", rotate_frame),
+    "baked": DronePair(
+        "same drone with every copy baked into its own solid (no change)", bake_copies
+    ),
+    "renamed": DronePair("every node is Part1..PartN, every shape Body1..BodyN", junk_all_names),
+    "arms": DronePair(
+        "third of four identical ArmUnit groups moved 5 mm up (one move)",
+        move_third_arm_unit,
+        base="arms_v1.step",
+        tree=arm_units_tree,
+    ),
 }
 
 
 def make_drone_pairs(out_dir: Path) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
     shutil.copy(HERE / "drone.step", out_dir / "v1.step")
-    for change, (apply, note) in DRONE_CHANGES.items():
-        expected = Expected("v1.step", f"{change}.step", note)
-        tree = drone_tree()
-        apply(tree, expected)
+    for change, pair in DRONE_PAIRS.items():
+        if pair.base != "v1.step" and not (out_dir / pair.base).exists():
+            write_step(pair.tree(), out_dir / pair.base)
+        expected = Expected(pair.base, f"{change}.step", pair.note)
+        tree = pair.tree()
+        pair.apply(tree, expected)
         write_step(tree, out_dir / f"{change}.step")
         write_expected(out_dir, change, expected)
 
 
 # ---------- any STEP file: edit the XCAF document ----------
+
+
+@dataclass
+class Placement:
+    key: Key
+    label: TDF_Label
+    is_leaf: bool
+    index: int  # among same-named siblings
+    sibling_names: list[str]
 
 
 def read_doc(path: Path) -> TDocStd_Document:
@@ -275,75 +363,94 @@ def read_doc(path: Path) -> TDocStd_Document:
     doc = TDocStd_Document(TCollection_ExtendedString("XmlOcaf"))
     if not reader.Transfer(doc):
         raise SystemExit(f"{path}: no usable geometry")
+    # OpenCascade names a blank placement after its STEP entity id ("95"). The
+    # importer undoes that; so must we, or the re-export would turn "" into "95".
+    for placement in placements(doc):
+        if name_of(placement.label).isdigit():
+            TDataStd_Name.Set_s(placement.label, TCollection_ExtendedString(""))
     return doc
 
 
-def leaf_placements(doc: TDocStd_Document) -> list[tuple[list[str], TDF_Label]]:
-    """(path, component label) for every placed part, in tree order."""
+def placements(doc: TDocStd_Document) -> list[Placement]:
+    """Every placed node (groups and parts) in tree order, with its key."""
     tool = XCAFDoc_DocumentTool.ShapeTool_s(doc.Main())
-    found: list[tuple[list[str], TDF_Label]] = []
+    found: list[Placement] = []
 
-    def visit(label: TDF_Label, path: list[str]) -> None:
-        proto = TDF_Label()
-        if not XCAFDoc_ShapeTool.GetReferredShape_s(label, proto):
-            proto = label
-        path = [*path, name_of(label)]
-        if not XCAFDoc_ShapeTool.IsAssembly_s(proto):
-            if XCAFDoc_ShapeTool.IsReference_s(label):
-                found.append((path, label))
+    def visit(label: TDF_Label, key: Key, index: int, sibling_names: list[str]) -> None:
+        definition = TDF_Label()
+        if not XCAFDoc_ShapeTool.GetReferredShape_s(label, definition):
+            definition = label
+        if XCAFDoc_ShapeTool.IsReference_s(label):
+            is_leaf = not XCAFDoc_ShapeTool.IsAssembly_s(definition)
+            found.append(Placement(key, label, is_leaf, index, sibling_names))
+        if not XCAFDoc_ShapeTool.IsAssembly_s(definition):
             return
         children = TDF_LabelSequence()
-        XCAFDoc_ShapeTool.GetComponents_s(proto, children)
-        for i in range(1, children.Length() + 1):
-            visit(children.Value(i), path)
+        XCAFDoc_ShapeTool.GetComponents_s(definition, children)
+        names = [name_of(children.Value(i)) for i in range(1, children.Length() + 1)]
+        for i, name in enumerate(names):
+            index = names[:i].count(name)
+            visit(children.Value(i + 1), [*key, with_index(name, index)], index, names)
 
     roots = TDF_LabelSequence()
     tool.GetFreeShapes(roots)
     for i in range(1, roots.Length() + 1):
-        visit(roots.Value(i), [])
+        visit(roots.Value(i), [name_of(roots.Value(i))], 0, [])
     return found
 
 
-def pick_targets(doc: TDocStd_Document) -> list[list[str]]:
-    """Paths of the parts to rename, move and delete: sorted, so reruns agree.
+def pick_targets(doc: TDocStd_Document) -> list[Key]:
+    """Keys of the parts to rename, move and delete: sorted, so reruns agree.
 
-    Only parts whose path is unique and has no blank or numeric name qualify
-    (a numeric placement name is OpenCascade standing in for a blank one, and
-    the importer turns it back into "", which would not match the path).
+    Only parts that are the *last* of their same-named siblings qualify, so
+    renaming or deleting one never shifts another node's "#k" index; blank
+    names are skipped too.
     """
-    paths = [path for path, _ in leaf_placements(doc)]
-    unique = [p for p in paths if paths.count(p) == 1]
-    usable = sorted(p for p in unique if all(name and not name.isdigit() for name in p))
+    usable: list[Key] = []
+    for p in placements(doc):
+        name = name_of(p.label)
+        is_last = p.index == p.sibling_names.count(name) - 1
+        if p.is_leaf and is_last and all(p.key):
+            usable.append(p.key)
+    usable.sort()
     if not usable:
         return []
     return [usable[i % len(usable)] for i in range(3)]
 
 
-def placement(doc: TDocStd_Document, path: list[str]) -> TDF_Label:
-    return next(label for p, label in leaf_placements(doc) if p == path)
+def placement(doc: TDocStd_Document, key: Key) -> Placement:
+    return next(p for p in placements(doc) if p.key == key)
 
 
-def xcaf_rename(doc: TDocStd_Document, path: list[str], expected: Expected) -> None:
-    new_name = path[-1] + "_renamed"
-    TDataStd_Name.Set_s(placement(doc, path), TCollection_ExtendedString(new_name))
-    expected.change(path, [*path[:-1], new_name], "renamed")
+def xcaf_rename(doc: TDocStd_Document, key: Key, expected: Expected) -> None:
+    target = placement(doc, key)
+    new_name = name_of(target.label) + "_renamed"
+    while new_name in target.sibling_names:
+        new_name += "_"
+    TDataStd_Name.Set_s(target.label, TCollection_ExtendedString(new_name))
+    expected.change(key, [*key[:-1], new_name], "renamed")
 
 
-def xcaf_move(doc: TDocStd_Document, path: list[str], expected: Expected) -> None:
-    label = placement(doc, path)
+def xcaf_move(doc: TDocStd_Document, key: Key, expected: Expected) -> None:
+    label = placement(doc, key).label
     shift = gp_Trsf()
     shift.SetTranslation(gp_Vec(5, 0, 0))
     moved = TopLoc_Location(shift) * XCAFDoc_ShapeTool.GetLocation_s(label)
     XCAFDoc_Location.Set_s(label, moved)
     XCAFDoc_DocumentTool.ShapeTool_s(doc.Main()).UpdateAssemblies()
-    expected.change(path, path, "moved", distance=5.0)
+    expected.change(key, key, "moved", distance=5.0)
 
 
-def xcaf_delete(doc: TDocStd_Document, path: list[str], expected: Expected) -> None:
+def xcaf_delete(doc: TDocStd_Document, key: Key, expected: Expected) -> None:
     tool = XCAFDoc_DocumentTool.ShapeTool_s(doc.Main())
-    tool.RemoveComponent(placement(doc, path))
+    label, definition = placement(doc, key).label, TDF_Label()
+    XCAFDoc_ShapeTool.GetReferredShape_s(label, definition)
+    tool.RemoveComponent(label)
+    # A definition nobody places any more would be written as a second root.
+    if XCAFDoc_ShapeTool.GetUsers_s(definition, TDF_LabelSequence(), False) == 0:
+        tool.RemoveShape(definition, False)
     tool.UpdateAssemblies()
-    expected.removed.append(path)
+    expected.removed.append(key)
 
 
 def make_pairs(step: Path, out_dir: Path) -> list[str]:
@@ -351,7 +458,7 @@ def make_pairs(step: Path, out_dir: Path) -> list[str]:
     out_dir.mkdir(parents=True, exist_ok=True)
     shutil.copy(step, out_dir / "v1.step")
     targets = pick_targets(read_doc(step))
-    plan: list[tuple[str, str, object, list[str] | None]] = [
+    plan: list[tuple[str, str, Callable | None, Key | None]] = [
         ("nochange", "v1 re-exported through the same writer, nothing else changed", None, None)
     ]
     if targets:
@@ -363,12 +470,13 @@ def make_pairs(step: Path, out_dir: Path) -> list[str]:
         ]
     else:
         print(f"{step.name}: no placed parts to move, rename or delete; writing nochange only")
-    for change, note, apply, path in plan:
+    for change, note, apply, key in plan:
         expected = Expected("v1.step", f"{change}.step", note)
         doc = read_doc(step)  # a fresh document per pair, so edits never pile up
         if apply is not None:
-            apply(doc, path, expected)
+            apply(doc, key, expected)
         write_doc(doc, out_dir / f"{change}.step")
+        restore_blank_names(out_dir / f"{change}.step")
         write_expected(out_dir, change, expected)
     return [change for change, *_ in plan]
 
@@ -376,41 +484,55 @@ def make_pairs(step: Path, out_dir: Path) -> list[str]:
 # ---------- checking an expected answer against the tag definitions ----------
 
 
+def key_of(model: Model, node_id: str) -> Key:
+    """Like Model.path_of, but same-named siblings are told apart: "Name", "Name#1", ..."""
+    key: Key = []
+    current: str | None = node_id
+    while current is not None:
+        node = model.node(current)
+        siblings = model.children(node.parent)
+        position = [s.id for s in siblings].index(node.id)
+        earlier = sum(1 for s in siblings[:position] if s.name == node.name)
+        key.append(with_index(node.name, earlier))
+        current = node.parent
+    return key[::-1]
+
+
 def verify(old: Model, new: Model, expected: dict) -> None:
     """Raise if `expected` disagrees with docs/diff-plan.md's tag definitions.
 
     Matching is given, not computed: changed pairs come from `expected`, every
-    other node must exist under the same path in both versions. Then each tag
+    other node must exist under the same key in both versions. Then each tag
     is re-derived from the two models and compared.
     """
-    old_by_path = {tuple(old.path_of(n.id)): n for n in old.nodes}
-    new_by_path = {tuple(new.path_of(n.id)): n for n in new.nodes}
-    if len(old_by_path) < len(old.nodes) or len(new_by_path) < len(new.nodes):
-        raise ValueError("node paths are not unique, cannot verify by path")
-
+    old_by_key = {tuple(key_of(old, n.id)): n for n in old.nodes}
+    new_by_key = {tuple(key_of(new, n.id)): n for n in new.nodes}
     pairs: dict[str, str] = {}  # old node id -> new node id
     tags: dict[str, list[str]] = {}  # old node id -> expected tags
     deltas: dict[str, dict[str, float]] = {}
     for change in expected["changes"]:
-        o, n = old_by_path[tuple(change["old"])], new_by_path[tuple(change["new"])]
+        o, n = old_by_key[tuple(change["old"])], new_by_key[tuple(change["new"])]
         pairs[o.id], tags[o.id], deltas[o.id] = n.id, change["tags"], change.get("delta", {})
-    removed = {tuple(p) for p in expected["removed"]}
-    added = {tuple(p) for p in expected["added"]}
-    for path, o in old_by_path.items():
-        if o.id in pairs or path in removed:
+    removed = {tuple(k) for k in expected["removed"]}
+    added = {tuple(k) for k in expected["added"]}
+    for key in removed:
+        if key not in old_by_key or key in new_by_key:
+            raise AssertionError(f"{key} is listed as removed but is not gone")
+    for key in added:
+        if key in old_by_key or key not in new_by_key:
+            raise AssertionError(f"{key} is listed as added but is not new")
+    for key, o in old_by_key.items():
+        if o.id in pairs or key in removed:
             continue
-        if path not in new_by_path:
-            raise AssertionError(f"{path} vanished but is not listed as removed")
-        pairs[o.id], tags[o.id], deltas[o.id] = new_by_path[path].id, [], {}
-    for path in added:
-        if path in old_by_path or path not in new_by_path:
-            raise AssertionError(f"{path} is listed as added but is not new")
+        if key not in new_by_key:
+            raise AssertionError(f"{key} vanished but is not listed as removed")
+        pairs[o.id], tags[o.id], deltas[o.id] = new_by_key[key].id, [], {}
     matched_new = set(pairs.values())
-    unmatched = {tuple(new.path_of(n.id)) for n in new.nodes if n.id not in matched_new}
+    unmatched = {key for key, n in new_by_key.items() if n.id not in matched_new}
     if unmatched != added:
         raise AssertionError(f"new nodes without a match differ from 'added': {unmatched ^ added}")
 
-    moved: set[str] = set()  # old ids of nodes tagged moved, parents are visited first
+    moved: set[str] = set()  # old ids of nodes tagged moved; parents are visited first
     for o in old.nodes:
         if o.id not in pairs:
             continue
@@ -420,7 +542,7 @@ def verify(old: Model, new: Model, expected: dict) -> None:
             moved.add(o.id)
         if sorted(found) != sorted(tags[o.id]):
             raise AssertionError(
-                f"{old.path_of(o.id)}: expected {tags[o.id]}, definitions give {found}"
+                f"{key_of(old, o.id)}: expected {tags[o.id]}, definitions give {found}"
             )
         check_delta(old, o, new, n, deltas[o.id])
     summary = dict.fromkeys(TAGS, 0)
@@ -440,25 +562,48 @@ def derive_tags(
         found.append("renamed")
     if (None if o.parent is None else pairs.get(o.parent)) != n.parent:
         found.append("re-parented")
-    if o.shape and n.shape and old.shapes[o.shape].fingerprint != new.shapes[n.shape].fingerprint:
+    modified = bool(o.shape and n.shape) and shapes_differ(old.shapes[o.shape], new.shapes[n.shape])
+    if modified:
         found.append("modified")
-    if o.shape is None:
-        # A group has no geometry of its own: its placement is its world transform.
-        if transforms_differ(old.world_transform(o.id), new.world_transform(n.id)):
-            found.append("moved")
-    elif o.parent in moved:
-        # The group moved; the part only moved if its *own* transform changed.
-        if transforms_differ(local(o), local(n)):
-            found.append("moved")
-    elif "modified" in found:
-        # Editing a part shifts its centre of mass, so only the transform can tell.
-        if transforms_differ(old.world_transform(o.id), new.world_transform(n.id)):
-            found.append("moved")
-    elif center_distance(old, o, new, n) > POSITION_TOLERANCE:
-        # Same geometry: compare where it ended up, not the transform. A baked
-        # export has identity transforms and the position inside the shape.
+    if ancestor_moved(old, o, moved):
+        # Something above moved; this node only moved if its *own* transform changed.
+        changed = transforms_differ(local(o), local(n))
+    elif o.shape is None or modified or same_frame(old.shapes[o.shape], new.shapes[n.shape]):
+        # Groups, modified parts (their centre of mass shifts) and parts whose
+        # geometry is defined in the same frame: compare world transforms, which
+        # also catches a rotation about the centre.
+        changed = transforms_differ(old.world_transform(o.id), new.world_transform(n.id))
+    else:
+        # Re-baked geometry (`baked` pair: identity transform, placement inside
+        # the shape): only where the centre ended up is comparable. A rotation
+        # about the centre is invisible here.
+        changed = center_distance(old, o, new, n) > POSITION_TOLERANCE
+    if changed:
         found.append("moved")
     return found
+
+
+def shapes_differ(a: Shape, b: Shape) -> bool:
+    """Modified = fingerprint differs *and* a raw measurement confirms it (not just rounding)."""
+    if a.fingerprint == b.fingerprint:
+        return False
+    if a.faces != b.faces or a.solids != b.solids:
+        return True
+    pairs = [(a.volume, b.volume), (a.area, b.area), *zip(a.inertia, b.inertia, strict=True)]
+    return any(abs(x - y) > MEASUREMENT_TOLERANCE * max(abs(x), abs(y), 1e-9) for x, y in pairs)
+
+
+def same_frame(a: Shape, b: Shape) -> bool:
+    return float(np.linalg.norm(np.array(a.center) - np.array(b.center))) <= POSITION_TOLERANCE
+
+
+def ancestor_moved(model: Model, node: Node, moved: set[str]) -> bool:
+    current = node.parent
+    while current is not None:
+        if current in moved:
+            return True
+        current = model.node(current).parent
+    return False
 
 
 def local(node: Node) -> np.ndarray:
@@ -487,28 +632,24 @@ def center_distance(old: Model, o: Node, new: Model, n: Node) -> float:
 
 
 def check_delta(old: Model, o: Node, new: Model, n: Node, delta: dict[str, float]) -> None:
+    where = key_of(old, o.id)
     if "distance" in delta:
         if o.shape:
             distance = center_distance(old, o, new, n)
         else:
-            distance = float(
-                np.linalg.norm(old.world_transform(o.id)[:3, 3] - new.world_transform(n.id)[:3, 3])
-            )
+            a, b = old.world_transform(o.id), new.world_transform(n.id)
+            distance = float(np.linalg.norm(a[:3, 3] - b[:3, 3]))
         if abs(distance - delta["distance"]) > POSITION_TOLERANCE:
-            raise AssertionError(
-                f"{old.path_of(o.id)}: moved {distance:.3f} mm, expected {delta['distance']}"
-            )
+            raise AssertionError(f"{where}: moved {distance:.3f} mm, expected {delta['distance']}")
     if "angle" in delta:
         angle = rotation_angle(old.world_transform(o.id), new.world_transform(n.id))
         if abs(angle - delta["angle"]) > ANGLE_TOLERANCE:
-            raise AssertionError(
-                f"{old.path_of(o.id)}: turned {angle:.3f} deg, expected {delta['angle']}"
-            )
+            raise AssertionError(f"{where}: turned {angle:.3f} deg, expected {delta['angle']}")
     if "volume" in delta:
         change = new.shapes[n.shape].volume - old.shapes[o.shape].volume
         if abs(change - delta["volume"]) > 0.01 * abs(delta["volume"]):
             raise AssertionError(
-                f"{old.path_of(o.id)}: volume changed {change:.2f}, expected {delta['volume']}"
+                f"{where}: volume changed {change:.2f}, expected {delta['volume']}"
             )
 
 
@@ -531,19 +672,15 @@ def main(argv: list[str]) -> None:
     if not argv:
         out_dir = HERE / "pairs" / "drone"
         make_drone_pairs(out_dir)
-        changes = list(DRONE_CHANGES)
+        changes = list(DRONE_PAIRS)
     else:
         step = Path(argv[0])
         out_dir = HERE / "real" / "pairs" / step.stem
         changes = make_pairs(step, out_dir)
     with tempfile.TemporaryDirectory() as work:
         for change in changes:
-            try:
-                verify_pair(out_dir, change, Path(work))
-                status = "ok"
-            except ValueError as error:
-                status = f"not verified ({error})"
-            print(f"{out_dir.relative_to(HERE)}/{change}: {status}")
+            verify_pair(out_dir, change, Path(work))
+            print(f"{out_dir.relative_to(HERE)}/{change}: ok")
 
 
 if __name__ == "__main__":

@@ -231,20 +231,27 @@ def messy_tree() -> Group:
 # ---------- writing ----------
 
 
-def to_assembly(group: Group) -> cq.Assembly:
-    assy = cq.Assembly(name=group.name, loc=group.loc)
+Names = dict[str, tuple[str, str]]  # placeholder name -> (node name, shape name)
+
+
+def to_assembly(group: Group, names: Names) -> cq.Assembly:
+    """Build the CadQuery assembly with numbered placeholder names.
+
+    CadQuery insists on unique names, but real exports repeat them (eight
+    "Clamp" parts, four "ArmUnit" groups). So every node is added as "1", "2",
+    ... and `names` remembers what fix_names() should write instead.
+    """
+    assy = cq.Assembly(name=group.name if not names else str(len(names)), loc=group.loc)
     for child in group.children:
+        placeholder = str(len(names) + 1)
         if isinstance(child, Group):
-            assy.add(to_assembly(child), name=child.name, loc=child.loc)
+            names[placeholder] = (child.name, child.name)
+            assy.add(to_assembly(child, names), name=placeholder, loc=child.loc)
         else:
+            names[placeholder] = (child.name, child.proto.name)
             color = cq.Color(child.color) if child.color else None
-            assy.add(child.proto.shape, name=child.name, loc=child.loc, color=color)
+            assy.add(child.proto.shape, name=placeholder, loc=child.loc, color=color)
     return assy
-
-
-def shape_names(group: Group) -> dict[str, str]:
-    """Instance name -> shape name, for every part in the tree."""
-    return {p.name: p.proto.name for p in flatten(group, cq.Location())}
 
 
 def name_of(label: TDF_Label) -> str:
@@ -256,33 +263,31 @@ def name_of(label: TDF_Label) -> str:
     return attr.Get().ToExtString()
 
 
-def fix_names(tool: XCAFDoc_ShapeTool, label: TDF_Label, shapes: dict[str, str]) -> None:
-    """Make the names look like a real CAD export.
+def fix_names(tool: XCAFDoc_ShapeTool, label: TDF_Label, names: Names) -> None:
+    """Replace the placeholders so the names look like a real CAD export.
 
     CadQuery names a shared shape after its *first* instance ("Motor_FL" for all
     four motors) and leaves the placement of a subassembly unnamed (readers would
     show "14" instead of "Frame"). Real tools name the shape ("Motor") and every
-    placement, so we do too.
+    placement, so we do too; blank names stay blank.
     """
     components = TDF_LabelSequence()
     tool.GetComponents_s(label, components)
     for i in range(1, components.Length() + 1):
         component, target = components.Value(i), TDF_Label()
         XCAFDoc_ShapeTool.GetReferredShape_s(component, target)
+        # A subassembly's placement is left unnamed; its definition carries the placeholder.
+        node_name, shape_name = names[name_of(component) or name_of(target)]
+        TDataStd_Name.Set_s(component, TCollection_ExtendedString(node_name))
+        TDataStd_Name.Set_s(target, TCollection_ExtendedString(shape_name))
         if XCAFDoc_ShapeTool.IsAssembly_s(target):
-            if not name_of(component):
-                TDataStd_Name.Set_s(component, TCollection_ExtendedString(name_of(target)))
-            fix_names(tool, target, shapes)
-        else:
-            # CadQuery replaces an empty instance name with a random UUID; put the "" back.
-            instance = name_of(component) if name_of(component) in shapes else ""
-            TDataStd_Name.Set_s(component, TCollection_ExtendedString(instance))
-            TDataStd_Name.Set_s(target, TCollection_ExtendedString(shapes[instance]))
+            fix_names(tool, target, names)
 
 
 def write_step(group: Group, path: Path) -> None:
     """Like Assembly.export(path), but with one root and proper shape/placement names."""
-    root, doc = toCAF(to_assembly(group), coloredSTEP=True)
+    names: Names = {}
+    root, doc = toCAF(to_assembly(group, names), coloredSTEP=True)
     tool = XCAFDoc_DocumentTool.ShapeTool_s(doc.Main())
     # toCAF wraps the top assembly in an extra placement label, which would make
     # the file read as "Drone -> Drone -> parts". Drop the wrapper, keep the assembly.
@@ -290,7 +295,7 @@ def write_step(group: Group, path: Path) -> None:
     XCAFDoc_ShapeTool.GetReferredShape_s(root, top)
     tool.RemoveShape(root, False)
     tool.UpdateAssemblies()
-    fix_names(tool, top, shape_names(group))
+    fix_names(tool, top, names)
     write_doc(doc, path)
     restore_blank_names(path)
 
@@ -298,8 +303,9 @@ def write_step(group: Group, path: Path) -> None:
 def restore_blank_names(path: Path) -> None:
     # OpenCascade refuses to write an empty product name and puts its own
     # ("Open CASCADE STEP translator 7.9 ...") instead. We want the blank back.
-    text = re.sub(r"'Open CASCADE STEP translator [^']*'", "''", path.read_text())
-    path.write_text(text)
+    text = path.read_text(encoding="utf-8")
+    text = re.sub(r"'Open CASCADE STEP translator [^']*'", "''", text)
+    path.write_text(text, encoding="utf-8")
 
 
 def write_single_part(

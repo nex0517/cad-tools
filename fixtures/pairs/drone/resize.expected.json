@@ -2,6 +2,7 @@
   "old": "v1.step",
   "new": "resize.step",
   "note": "Battery 10 mm longer",
+  "keys": "names from the root down; the k-th same-named sibling (k >= 1) is 'Name#k'",
   "changes": [
     {
       "old": [

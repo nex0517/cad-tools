@@ -88,7 +88,12 @@ correct in the viewer; the Hungarian algorithm is only worth adding if a pair
 is mis-assigned *despite* correct scores.
 
 Groups: a group matches the old group that contains most of its matched
-children (majority vote), tie broken by name.
+children (majority vote). Names are no tie-break — CPT17 has eight identical
+`LegUnit` groups with the same name — so a tie goes to the old group whose
+matched children are closest in world position (smallest total `center`
+distance). Because leaves were matched by position first, identical groups
+normally separate themselves by which leaves they hold; the `arms` pair (four
+same-named `ArmUnit` groups, one moved 5 mm) checks exactly this.
 
 ### 2. Classify each matched pair
 
@@ -162,8 +167,9 @@ removed red (ghosted), moved blue, modified orange; the tree shows tags.
    `diff.json`; check all ten against the tag definitions in "Classify" before
    step 2 starts. (~1 session, including the fixture-overlap cleanup noted
    in #2.) **Done:** `fixtures/pairs/drone/` holds `v1.step`, one
-   `<change>.step` per pair and `<change>.expected.json` (paths, tags, deltas,
-   summary), all checked by `verify()`. The same script run on any STEP file
+   `<change>.step` per pair and `<change>.expected.json` (keys, tags, deltas,
+   summary), all checked by `verify()`; plus `arms_v1.step` / `arms.step`, four
+   identical `ArmUnit` groups with one moved. The same script run on any STEP file
    (`python fixtures/make_diff_pairs.py fixtures/real/x.step`) writes
    no-change / move / delete / rename pairs with expected answers into
    `fixtures/real/pairs/x/`.
@@ -180,21 +186,43 @@ Rough total: 3 sessions of work, plus review turnarounds.
 
 ## Test strategy
 
-- Every generated pair asserts the exact `diff.json` (ids differ between
-  files, so assert on paths, not ids).
+- Every generated pair asserts the exact `diff.json`. Ids differ between
+  files and paths are not unique (CPT17: eight `LegUnit > Clamp (3.3535)`),
+  so nodes are named by **key**: the names from the root down, where the k-th
+  sibling with the same name (k ≥ 1) is written `Name#k` — `Drone / ArmUnit#2`.
+  Assumptions: the export keeps sibling order (every tool seen so far does),
+  and deleting or renaming one of several same-named siblings shifts the
+  index of those after it. The generator therefore always edits the *last*
+  same-named sibling, and the matcher never matches on the index — it is a
+  label for humans and tests, not a matching rule. If an export reorders
+  siblings, keys with `#k` may point at a different copy; identical copies
+  make that harmless, different geometry under one name (CPT17's two
+  `Blade5` sizes) would show as a spurious modified pair.
 - The `drone_renamed` pair must match every part using fingerprint + position
   alone and report **every part renamed, nothing else** (no moves, no
   added/removed); the match rate is the "how much do we depend on names"
   number and is reported, not just pass/fail.
 - Swapping two identical props must report **2 renamed** (position beats
   name), not two moves.
-- The real pairs in `fixtures/real/pairs/` must run to completion and their
-  summaries be eyeballed for sanity; they have no expected `diff.json`.
+- The real pairs in `fixtures/real/pairs/` must run to completion. The
+  generated ones (`make_diff_pairs.py <file>`: no-change / rename / move /
+  delete) have an expected answer; hand-made pairs only get eyeballed.
 - Rotating the `Frame` group must report **one** move, not thirteen.
 - Detail diff: the drilled-hole pair must produce an empty `added` and a
   `removed` solid whose volume equals the hole's (π r² h within 1 %).
 - Performance: a synthetic 5,000-leaf assembly (the drone tiled 160 times)
   matches in under 5 s.
+
+## Seen in real files
+
+CPT17 (335 nodes, 316 leaves, depth 4): every copy is its own shape (316
+shapes, 20 distinct geometries — `drone_messy` in real life); eight identical
+`LegUnit` groups share one name, and inside each, 8 × `Clamp (3.3535)` etc.
+share name, parent and geometry; `Blade5 (Cfrp or equivalent)` appears twice
+per leg with *different* sizes. Import 44.5 s on Windows, of which writing
+breps is 15.4 s (`--no-breps`: 27 s). Decide in step 3 whether breps become
+optional or are built only for the shapes a detail diff asks about; until
+then real files are imported with `--no-breps`.
 
 ## Risks
 

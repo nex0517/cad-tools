@@ -2,6 +2,7 @@
   "old": "v1.step",
   "new": "hole.step",
   "note": "4 mm hole drilled in CenterPlate",
+  "keys": "names from the root down; the k-th same-named sibling (k >= 1) is 'Name#k'",
   "changes": [
     {
       "old": [
