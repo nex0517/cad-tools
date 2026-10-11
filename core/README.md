@@ -39,6 +39,8 @@ With the `diff/` package installed (`pip install -e diff`):
 ```sh
 kyumi diff v1.kyumi v2.kyumi -o diff.json                  # what changed, by part
 kyumi diff v1.kyumi v2.kyumi --detail Drone/Frame/CenterPlate   # added/removed material of one part
+kyumi diff v1.kyumi v2.kyumi --detail-all --out-dir v2-detail    # the same for every modified part, ahead
+kyumi view v1.kyumi v2.kyumi --detail v2-detail            # the new model coloured by change
 ```
 
 `--detail` writes `detail/added.glb`, `detail/removed.glb` and `detail/detail.json`

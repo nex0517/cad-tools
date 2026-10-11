@@ -219,8 +219,69 @@ packages were written by different generator versions it warns that
 fingerprints may not be comparable. `--detail KEY` adds the detail diff of one
 part (section 3): `detail  Drone › Frame › CenterPlate: added 0.0 mm³, removed 37.7 mm³`
 plus the files it wrote.
-The viewer gets a diff mode: load both packages, colour added parts green,
-removed red (ghosted), moved blue, modified orange; the tree shows tags.
+#### Viewer diff mode
+
+`kyumi view OLD.kyumi NEW.kyumi [--detail DIR]` loads both packages, runs the
+matcher itself (under a second even at 5,000 parts) and shows the **new** model
+coloured by change: added green, removed red at 40 % opacity (ghosts: the old
+model's meshes at their old world transforms), moved / re-parented blue with a
+thin line from the old centre to the new one, modified orange, renamed in its
+own colour with a tag in the tree; unchanged parts are grey until "show
+unchanged" is ticked. The selection glow is white, outside those colours. The
+page does no deciding: the server works every node's status out in Python
+(`diff/kyumi_diff/view.py`, Model API only; `core/kyumi/viewer.py` never
+imports it) and the page only paints `/changes.json`:
+
+```json
+{
+  "old": "v1.kyumi", "new": "move.kyumi",
+  "summary": {"added": 0, "removed": 0, "moved": 1, "renamed": 0, "modified": 0, "re-parented": 0},
+  "status": {"n18": {"class": "moved", "tags": ["moved"], "delta": {"distance": 5.0},
+                     "inherited": false, "old_key": ["Drone", "Propulsion", "Motor_FR"],
+                     "new_key": ["Drone", "Propulsion", "Motor_FR"]},
+             "n2":  {"class": "moved", "tags": [], "delta": {}, "inherited": true, "...": "..."}},
+  "ghosts": [{"old_id": "n9", "key": ["Drone", "Frame", "Screw_3"], "name": "Screw_3",
+              "mesh": "/old/meshes/s3.glb", "world": [16 numbers, column-major], "volume": 1.2, "size": [3]}],
+  "moves": [{"new_id": "n18", "old_id": "n18", "from": [x, y, z], "to": [x, y, z], "distance": 5.0}]
+}
+```
+
+`status` is keyed by **new** ids; a part with no move tag of its own inherits
+`moved` / `re-parented` from its nearest tagged parent group (`inherited:
+true`), so rotating `Frame` colours all thirteen parts; priority is modified >
+moved / re-parented > renamed, groups also carry `children_class`, the
+strongest class inside them. `ghosts` carry **old** ids and are the only old
+things served (`/old/meshes/<id>.glb`, removed parts' shapes only): old and new
+ids collide, so the page keeps them in separate maps (`old:<id>`). A moved
+group's centre is the mean of its parts' centres. Modified parts also get
+`detail`: `{"state": "loaded", "added_mm3", "removed_mm3", "volume_change_mm3",
+"aligned", "files": {"added": false, "removed": true}}`, or `state` = the
+command to run, or the entry's own status ("could not compute" / "not a solid").
+
+Exact detail is never computed on click (one CPT17 shape takes 27 s, section
+3). `kyumi diff OLD NEW --detail-all [--out-dir DIR]` runs `detail()` for every
+`modified` part ahead and writes `DIR/details.json` plus
+`<new_id>.added.glb` / `<new_id>.removed.glb` (an empty side is `null` and has
+no file; stale `*.glb` in DIR are deleted first):
+
+```json
+{"old": "v1.kyumi", "new": "hole.kyumi",
+ "parts": [{"key": ["Drone", "Frame", "CenterPlate"], "old_id": "n2", "new_id": "n2",
+            "status": "ok", "added_mm3": 0.0, "removed_mm3": 37.699, "volume_change_mm3": -37.699,
+            "aligned": false, "frame": "the new part's own coordinates; ...",
+            "files": {"added": null, "removed": "n2.removed.glb"}, "seconds": 0.02}]}
+```
+
+At start-up `kyumi view --detail DIR` checks every entry against its own diff
+(a `modified` change with the same key and ids, `volume_change_mm3` = new minus
+old shape volume within 0.001, files exactly `<new_id>.<side>.glb` and present)
+and refuses to start otherwise ("DIR was made from other packages"); the
+server builds file names itself and serves `/detail/<new_id>/<side>.glb` from
+memory, only for verified non-null sides. Everything else is 404 and the Host
+check covers every route. Clicking a modified part with detail loaded makes it
+25 % transparent and places the green / red meshes with the node's world
+transform, exactly like `meshes/*.glb`. Kyumi has its own viewer; these two
+json shapes are what it would reuse.
 
 ## Milestones
 
@@ -260,8 +321,11 @@ removed red (ghosted), moved blue, modified orange; the tree shows tags.
    nothing removed, moved/rotated parts give nothing; a re-exported brep is
    aligned first. Not done until the CPT17 modify pair and the self-comparison
    of all 316 shapes pass on a real machine (`core/real_files.py`).
-4. **Viewer diff mode.** (~0.5 session.) Loads precomputed `detail/` files only;
-   never runs a detail diff on click (a single shape can take 27 s, section 3).
+4. **Viewer diff mode.** (~0.5 session.) **Built:** `kyumi view OLD NEW
+   [--detail DIR]` and `kyumi diff --detail-all` (section 4, "Viewer diff
+   mode"). Loads precomputed detail files only; never runs a detail diff on
+   click (a single shape can take 27 s, section 3). Not done until the CPT17
+   pairs look right on a real machine (`docs/real-files.md`, Viewer table).
 
 Rough total: 3 sessions of work, plus review turnarounds.
 

@@ -29,7 +29,7 @@ from pathlib import Path
 
 from kyumi import Model, load
 from kyumi.package import import_step
-from kyumi_diff import Diff, agrees, detail, diff
+from kyumi_diff import Diff, agrees, changes_json, detail, detail_all, diff, load_details
 from kyumi_diff.detail import FAILED, NOT_SOLID, OK, compare, is_empty, read_brep, solids
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -124,10 +124,14 @@ def self_comparison_line(model: Model) -> str:
 
 
 PAIR_COLUMNS = "pair | diff | time | summary | detail"
+VIEWER_COLUMNS = "pair | --detail-all | /changes.json | page ready (one file / diff)"
 
 
-def pair_lines(pair_dir: Path, out_dir: Path) -> list[str]:
-    """One row per expected.json in a pair directory: does `kyumi diff` agree with it?"""
+def pair_lines(pair_dir: Path, out_dir: Path, viewer_rows: list[str]) -> list[str]:
+    """One row per expected.json in a pair directory: does `kyumi diff` agree with it?
+    Also one Viewer row per pair: how long `--detail-all` (modified pairs) and the
+    server's `/changes.json` take; the page's ready times are typed in by hand from
+    the viewer's header."""
     rows = []
     for expected_file in sorted(pair_dir.glob("*.expected.json")):
         expected = json.loads(expected_file.read_text(encoding="utf-8"))
@@ -145,6 +149,7 @@ def pair_lines(pair_dir: Path, out_dir: Path) -> list[str]:
             result = diff(*models)
             elapsed = time.perf_counter() - start
             detail_cell = detail_check(models, result, modified) if modified else ""
+            viewer_rows.append(viewer_line(name, models, result, out_dir / f"{name}-detail"))
         except Exception as error:  # noqa: BLE001 (any failure is a result worth recording)
             rows.append(f"| {name} | failed: {type(error).__name__}: {error} | | | |")
             continue
@@ -178,6 +183,19 @@ def detail_check(models: list[Model], result: Diff, modified: list[dict]) -> str
     return "; ".join(cells)
 
 
+def viewer_line(name: str, models: list[Model], result: Diff, detail_dir: Path) -> str:
+    all_cell = ""
+    entries: dict[str, dict] = {}
+    if any("modified" in c.tags for c in result.changes):
+        start = time.perf_counter()
+        detail_all(models[0], models[1], result, detail_dir)
+        all_cell = f"{time.perf_counter() - start:.1f} s"
+        entries, _ = load_details(detail_dir, models[0], models[1], result)
+    start = time.perf_counter()
+    changes_json(models[0], models[1], result, entries, detail_dir if entries else None)
+    return f"| {name} | {all_cell} | {time.perf_counter() - start:.2f} s |  |"
+
+
 def main() -> None:
     steps = sorted(
         p
@@ -208,10 +226,12 @@ def main() -> None:
     pair_dirs = sorted(p for p in PAIRS.glob("*") if p.is_dir()) if PAIRS.is_dir() else []
     if pair_dirs:
         lines += ["", "## Pairs", "", f"| {PAIR_COLUMNS} |", "|---" * 5 + "|"]
+        viewer_rows: list[str] = []
         with tempfile.TemporaryDirectory() as tmp:
             for pair_dir in pair_dirs:
                 print(pair_dir.relative_to(REAL), file=sys.stderr)
-                lines += pair_lines(pair_dir, Path(tmp))
+                lines += pair_lines(pair_dir, Path(tmp), viewer_rows)
+        lines += ["", "## Viewer", "", f"| {VIEWER_COLUMNS} |", "|---" * 4 + "|", *viewer_rows]
     REPORT.write_text("\n".join(lines) + "\n", encoding="utf-8")
     print(f"wrote {REPORT.relative_to(ROOT)} ({len(steps)} files, {len(pair_dirs)} pair sets)")
 
