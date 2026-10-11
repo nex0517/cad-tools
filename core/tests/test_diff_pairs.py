@@ -33,9 +33,9 @@ def drone_v1(tmp_path_factory: pytest.TempPathFactory) -> Model:
     return import_pair_file(PAIR_DIR, "v1.step", tmp_path_factory.mktemp("v1"))
 
 
-def test_the_ten_planned_pairs_plus_arms_are_committed() -> None:
+def test_the_ten_planned_pairs_plus_arms_and_reparent_are_committed() -> None:
     names = {p.name.removesuffix(".expected.json") for p in PAIR_DIR.glob("*.expected.json")}
-    assert names == set(DRONE_PAIRS) and len(names) == 11
+    assert names == set(DRONE_PAIRS) and len(names) == 12
     assert all((PAIR_DIR / f"{name}.step").is_file() for name in names)
 
 

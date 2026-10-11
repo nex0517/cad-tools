@@ -31,6 +31,7 @@ from pathlib import Path
 import cadquery as cq
 import numpy as np
 from kyumi import Model, Node, Shape, import_step, load
+from kyumi_diff.index import KEY_FORMAT, Key, key_of, with_index
 from make_fixtures import (
     HERE,
     Group,
@@ -55,17 +56,10 @@ from OCP.TopLoc import TopLoc_Location
 from OCP.XCAFDoc import XCAFDoc_DocumentTool, XCAFDoc_Location, XCAFDoc_ShapeTool
 
 TAGS = ("added", "removed", "moved", "renamed", "modified", "re-parented")
-KEY_FORMAT = "names from the root down; the k-th same-named sibling (k >= 1) is 'Name#k'"
 # From docs/diff-plan.md, "Classify": smaller differences than these are not a change.
 POSITION_TOLERANCE = 0.01  # mm
 ANGLE_TOLERANCE = 0.01  # degrees
 MEASUREMENT_TOLERANCE = 0.001  # relative: volume, area or inertia must differ by 0.1 %
-
-Key = list[str]
-
-
-def with_index(name: str, earlier_same_name: int) -> str:
-    return f"{name}#{earlier_same_name}" if earlier_same_name else name
 
 
 @dataclass
@@ -201,6 +195,32 @@ def swap_props(tree: Group, expected: Expected) -> None:
     expected.change(before[id(fr)], after[id(fr)], "renamed")
 
 
+def world_loc(group: Group, target: Part | Group) -> cq.Location:
+    """`target`'s placement in the root frame: the product of every loc on the way down."""
+    for child in group.children:
+        if child is target:
+            return group.loc * child.loc
+        if isinstance(child, Group):
+            try:
+                return group.loc * world_loc(child, target)
+            except KeyError:
+                pass
+    raise KeyError(target.name)
+
+
+def reparent_screw(tree: Group, expected: Expected) -> None:
+    frame = find(tree, "Frame")[1]
+    electronics = find(tree, "Electronics")[1]
+    assert isinstance(frame, Group) and isinstance(electronics, Group)
+    holder, screw = find(frame, "Screw_1")
+    before = tree_keys(tree)[id(screw)]
+    world = world_loc(tree, screw)
+    holder.children.remove(screw)
+    electronics.children.append(screw)
+    screw.loc = world_loc(tree, electronics).inverse * world  # same place, new parent
+    expected.change(before, tree_keys(tree)[id(screw)], "re-parented")
+
+
 def rotate_frame(tree: Group, expected: Expected) -> None:
     frame = find(tree, "Frame")[1]
     frame.loc = at(angle=10) * frame.loc
@@ -275,6 +295,10 @@ DRONE_PAIRS = {
     "hole": DronePair("4 mm hole drilled in CenterPlate", drill_plate),
     "swap": DronePair(
         "Prop_FL and Prop_FR trade names; positions unchanged (2 renamed)", swap_props
+    ),
+    "reparent": DronePair(
+        "Screw_1 moved from Frame into Electronics, world position kept (re-parented only)",
+        reparent_screw,
     ),
     "rotate": DronePair("Frame group rotated 10 degrees (one move, not thirteen)", rotate_frame),
     "baked": DronePair(
@@ -457,20 +481,6 @@ def make_pairs(step: Path, out_dir: Path) -> list[str]:
 # ---------- checking an expected answer against the tag definitions ----------
 
 
-def key_of(model: Model, node_id: str) -> Key:
-    """Like Model.path_of, but same-named siblings are told apart: "Name", "Name#1", ..."""
-    key: Key = []
-    current: str | None = node_id
-    while current is not None:
-        node = model.node(current)
-        siblings = model.children(node.parent)
-        position = [s.id for s in siblings].index(node.id)
-        earlier = sum(1 for s in siblings[:position] if s.name == node.name)
-        key.append(with_index(node.name, earlier))
-        current = node.parent
-    return key[::-1]
-
-
 def verify(old: Model, new: Model, expected: dict) -> None:
     """Raise if `expected` disagrees with docs/diff-plan.md's tag definitions.
 
@@ -636,7 +646,7 @@ def verify_pair(pair_dir: Path, change: str, work_dir: Path) -> None:
     models = []
     for name in (expected["old"], expected["new"]):
         out = work_dir / f"{pair_dir.name}-{name}.kyumi"
-        import_step(pair_dir / name, out)
+        import_step(pair_dir / name, out, breps=False)
         models.append(load(out))
     verify(models[0], models[1], expected)
 

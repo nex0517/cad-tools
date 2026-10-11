@@ -55,10 +55,16 @@ from their children.
 
 **Narrow candidates** so this stays fast on 5,000-part assemblies (comparing
 every pair would be 25 million comparisons). Put every old leaf in three
-dictionaries: by node name, by fingerprint, and by a coarse spatial grid cell
-(world position of the shape's `center`, cell size = 5 % of the model's
-bounding-box diagonal, including the 26 neighbouring cells). A new leaf's
-candidates are the union of the three lookups. Typical candidate count: 1–10.
+dictionaries: by node name, by fingerprint, and by a spatial grid cell (world
+position of the shape's `center`, cell size = the median part's bounding-box
+diagonal, including the 26 neighbouring cells). A new leaf's candidates are the
+union of the three lookups. Typical candidate count: 1–10. Two things keep
+that true on big models: the cell is sized by the *part*, not the model (5 % of
+a 190 m fleet's diagonal would put a whole drone in one cell), and a name or
+a fingerprint shared by more than 64 copies (162 drones with the same part
+names, 1,280 identical screws) is no longer used as a lookup on its own — those
+copies are only found through the grid. That cap took the 5,000-part test from
+850 k scored pairs (4.6–4.9 s) to 0.4 s including `load()`.
 
 **Rule: among parts with the same fingerprint, position beats name.** Two
 identical props that trade places are the *same* props with swapped labels
@@ -67,7 +73,8 @@ earlier draft (node name 0.25 > distance 0.15) the swap pair scored as two
 moves, and no assignment algorithm can fix that, because the scores are wrong,
 not the assignment.
 
-**Score** each candidate pair, 0–1 each, summed with weights:
+**Score** each candidate pair, 0–1 each, summed with weights (`tolerance` in
+the distance term is the grid cell size, so "near" means "within a part"):
 
 | signal | weight | note |
 |---|---|---|
@@ -115,9 +122,14 @@ same-named `ArmUnit` groups, one moved 5 mm) checks exactly this.
   differs by more than 0.1 % or a face count differs.
 - A pair can carry several tags (moved + renamed).
 
-Unmatched old leaves → **removed**; unmatched new leaves → **added**. If an
-added and a removed node share a fingerprint, report it as **moved far**
-(moved beyond the candidate grid) rather than as two changes.
+Unmatched old leaves → **removed**; unmatched new leaves → **added**. There
+is no separate "moved far" tag: a part moved beyond the grid is still a
+candidate through its fingerprint, and a same-fingerprint pair scores at least
+0.40 (> the 0.30 cut-off) however far apart, so it matches and is reported as
+**moved** with its distance. The one case this drops: a part moved far while
+more than 64 copies of its name *and* its fingerprint exist (the grid is then
+the only lookup), which comes out as added + removed. Not worth a second pass
+until a real file shows it.
 
 ### 3. Detail diff (one pair, on request)
 
@@ -141,16 +153,26 @@ added and a removed node share a fingerprint, report it as **moved far**
 
 ```json
 {
-  "old": "drone_v1.kyumi", "new": "drone_v2.kyumi",
-  "pairs":   [{"old": "n7", "new": "n9", "score": 0.93, "tags": ["moved"], "delta": {"distance": 5.0}}],
-  "added":   ["n31"],
-  "removed": ["n12"],
-  "summary": {"added": 1, "removed": 1, "moved": 1, "renamed": 0, "modified": 0}
+  "old": "v1.step", "new": "move.step",
+  "keys": "names from the root down; the k-th same-named sibling (k >= 1) is 'Name#k'",
+  "changes": [{"old": ["Drone", "Propulsion", "Motor_FR"], "new": ["Drone", "Propulsion", "Motor_FR"],
+               "tags": ["moved"], "delta": {"distance": 5.0},
+               "old_id": "12", "new_id": "12", "score": 0.9}],
+  "added":   [],
+  "removed": [["Drone", "Frame", "Screw_3"]],
+  "summary": {"added": 0, "removed": 1, "moved": 1, "renamed": 0, "modified": 0, "re-parented": 0}
 }
 ```
 
-A `kyumi diff old.kyumi new.kyumi [-o diff.json]` command prints the summary
-and one line per change (`moved  Drone › Propulsion › Motor_FL  by 5.0 mm`).
+Nodes are named by key, not id (ids are not stable across files); `old_id`,
+`new_id` and the match `score` are there for tools that want to follow a change
+back into the two packages. Otherwise the file has the same shape as the
+generated `*.expected.json`, so tests compare
+the two directly. `kyumi diff old.kyumi new.kyumi [-o diff.json]` prints the
+match rate (parts of the old model that found a partner), the summary and one
+line per change (`moved  Drone › Propulsion › Motor_FR  by 5.0 mm`). If the two
+packages were written by different generator versions it warns that
+fingerprints may not be comparable.
 The viewer gets a diff mode: load both packages, colour added parts green,
 removed red (ghosted), moved blue, modified orange; the tree shows tags.
 
@@ -169,7 +191,9 @@ removed red (ghosted), moved blue, modified orange; the tree shows tags.
    in #2.) **Done:** `fixtures/pairs/drone/` holds `v1.step`, one
    `<change>.step` per pair and `<change>.expected.json` (keys, tags, deltas,
    summary), all checked by `verify()`; plus `arms_v1.step` / `arms.step`, four
-   identical `ArmUnit` groups with one moved. The same script run on any STEP file
+   identical `ArmUnit` groups with one moved, and `reparent.step`, `Screw_1`
+   moved from `Frame` into `Electronics` with its world position kept (its
+   local transform changes; expected: `re-parented` only). The same script run on any STEP file
    (`python fixtures/make_diff_pairs.py fixtures/real/x.step`) writes
    no-change / move / delete / rename pairs with expected answers into
    `fixtures/real/pairs/x/`.
@@ -177,7 +201,11 @@ removed red (ghosted), moved blue, modified orange; the tree shows tags.
    `kyumi diff`, using only the `Model` API. All pairs from step 1 produce
    their expected output. **Not done until it has also run on the real v1/v2
    pairs in `fixtures/real/pairs/`** (via `core/real_files.py`, results in
-   `docs/real-files.md`). (~1 session.)
+   `docs/real-files.md`). (~1 session.) **Built:** `diff/` (`kyumi_diff`
+   package: `index`, `match`, `classify`, `report`), `kyumi diff`; every
+   drone pair and the generic pairs from `drone_messy` / `drone_shared`
+   reproduce their expected answer; the renamed pair matches 31/31 parts;
+   5,022 parts (the drone tiled 162 times) diff in ~2.5 s.
 3. **Detail diff** for one pair, including the fuzzy-boolean fallback.
    (~0.5 session.)
 4. **Viewer diff mode.** (~0.5 session.)
@@ -186,8 +214,10 @@ Rough total: 3 sessions of work, plus review turnarounds.
 
 ## Test strategy
 
-- Every generated pair asserts the exact `diff.json`. Ids differ between
-  files and paths are not unique (CPT17: eight `LegUnit > Clamp (3.3535)`),
+- Every generated pair asserts the exact `diff.json` (everything but ids and
+  scores), and the match rate: v1 parts paired with the partner the expected
+  answer names ÷ v1 parts, printed as `renamed: 31/31 correct (100.0%)`. Ids
+  differ between files and paths are not unique (CPT17: eight `LegUnit > Clamp (3.3535)`),
   so nodes are named by **key**: the names from the root down, where the k-th
   sibling with the same name (k ≥ 1) is written `Name#k` — `Drone / ArmUnit#2`.
   Assumptions: the export keeps sibling order (every tool seen so far does),
