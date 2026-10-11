@@ -15,7 +15,7 @@ from make_diff_pairs import (
     read_doc,
     verify,
 )
-from make_fixtures import drone_tree, flatten, overlaps
+from make_fixtures import drone_tree, flatten, overlaps, shared_tree
 
 from tests.conftest import FIXTURES, PAIRS
 
@@ -64,6 +64,7 @@ def test_swap_is_two_renames_and_renamed_is_only_renames() -> None:
     [
         PAIR_DIR / "arms_v1.step",  # repeated names: four ArmUnit, two Screw per unit
         FIXTURES / "drone_messy.step",  # baked copies and one blank name
+        FIXTURES / "drone_shared.step",  # one subassembly definition placed twice
     ],
 )
 def test_generic_mode_works_on_any_file(source: Path, tmp_path: Path) -> None:
@@ -90,10 +91,18 @@ def test_targets_are_picked_deterministically_and_never_shift_a_key() -> None:
     assert ["Drone", "ArmUnit#3", "Screw#1"] in leaves and ["Drone", "ArmUnit#3", "Screw"] in leaves
 
 
+def test_parts_inside_a_twice_placed_subassembly_are_never_picked(capsys) -> None:
+    doc = read_doc(FIXTURES / "drone_shared.step")
+    keys = [p.key for p in placements(doc)]
+    assert ["Drone", "ArmUnit", "Motor"] in keys and ["Drone", "ArmUnit#1", "Motor"] in keys
+    assert pick_targets(doc) == [["Drone", "CenterPlate"]] * 3
+    assert "skipped 10 parts" in capsys.readouterr().out
+
+
 def test_single_part_file_gets_only_the_nochange_pair(tmp_path: Path) -> None:
     assert make_pairs(FIXTURES / "bracket.step", tmp_path / "bracket") == ["nochange"]
 
 
-@pytest.mark.parametrize("tree", [drone_tree, arm_units_tree])
+@pytest.mark.parametrize("tree", [drone_tree, arm_units_tree, shared_tree])
 def test_fixture_parts_do_not_overlap(tree) -> None:
     assert overlaps(flatten(tree(), cq.Location())) == []

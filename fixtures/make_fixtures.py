@@ -228,6 +228,45 @@ def messy_tree() -> Group:
     return Group("Drone", at(), parts)
 
 
+def arm_units_tree() -> Group:
+    """A drone built from four identical "ArmUnit" groups: same name, same children.
+
+    Like CPT17's eight "LegUnit" groups: names cannot tell the groups apart, only
+    where their children sit can.
+    """
+    plate, arm = Proto("CenterPlate", make_plate()), Proto("Arm", make_arm())
+    motor, prop, screw = (
+        Proto("Motor", make_motor()),
+        Proto("Prop", make_propeller()),
+        Proto("Screw", make_screw()),
+    )
+    arm_start, z = PLATE_SIZE / 2 - 20, ARM_THICKNESS
+    units: list[Part | Group] = [Part("CenterPlate", plate, at(), "#222222")]
+    for angle in CORNERS.values():
+        x, y = arm_tip(angle, arm_start)
+        children: list[Part | Group] = [
+            Part("Arm", arm, at(0, 0, z / 2), "#333333"),
+            Part("Motor", motor, at(ARM_LENGTH - 10, 0, z), "#b0b0b0"),
+            Part("Prop", prop, at(ARM_LENGTH - 10, 0, z + 21), "#ff7a00"),
+        ]
+        children += [
+            Part("Screw", screw, at(along - arm_start, 0, z), "#888888") for along in SCREW_ALONG
+        ]
+        units.append(Group("ArmUnit", at(x, y, PLATE_THICKNESS / 2, angle), children))
+    return Group("Drone", at(), units)
+
+
+def shared_tree() -> Group:
+    """Centre plate plus two "ArmUnit" groups that are one *definition* placed twice.
+
+    In the STEP file the second ArmUnit is not a copy of the first but a second
+    placement of the same subassembly (write_shared_step), as CAD tools do for
+    repeated subassemblies. Editing a part inside it would change both copies.
+    """
+    plate, *units = arm_units_tree().children
+    return Group("Drone", at(), [plate, units[0], units[2]])
+
+
 # ---------- writing ----------
 
 
@@ -284,8 +323,8 @@ def fix_names(tool: XCAFDoc_ShapeTool, label: TDF_Label, names: Names) -> None:
             fix_names(tool, target, names)
 
 
-def write_step(group: Group, path: Path) -> None:
-    """Like Assembly.export(path), but with one root and proper shape/placement names."""
+def build_doc(group: Group) -> tuple[TDocStd_Document, XCAFDoc_ShapeTool, TDF_Label]:
+    """The XCAF document for a tree: one root and proper shape/placement names."""
     names: Names = {}
     root, doc = toCAF(to_assembly(group, names), coloredSTEP=True)
     tool = XCAFDoc_DocumentTool.ShapeTool_s(doc.Main())
@@ -296,6 +335,38 @@ def write_step(group: Group, path: Path) -> None:
     tool.RemoveShape(root, False)
     tool.UpdateAssemblies()
     fix_names(tool, top, names)
+    return doc, tool, top
+
+
+def write_step(group: Group, path: Path) -> None:
+    """Like Assembly.export(path), but with one root and proper shape/placement names."""
+    doc, _, _ = build_doc(group)
+    write_doc(doc, path)
+    restore_blank_names(path)
+
+
+def write_shared_step(group: Group, path: Path) -> None:
+    """write_step, but a top-level group repeating an earlier group's name is written
+    as a second placement of that group's definition instead of its own copy."""
+    kept: list[Part | Group] = []
+    repeats: list[Group] = []
+    for child in group.children:
+        is_repeat = isinstance(child, Group) and any(
+            isinstance(k, Group) and k.name == child.name for k in kept
+        )
+        (repeats if is_repeat else kept).append(child)  # type: ignore[arg-type]
+    doc, tool, top = build_doc(Group(group.name, group.loc, kept))
+    components = TDF_LabelSequence()
+    tool.GetComponents_s(top, components)
+    definitions: dict[str, TDF_Label] = {}
+    for i in range(1, components.Length() + 1):
+        definition = TDF_Label()
+        XCAFDoc_ShapeTool.GetReferredShape_s(components.Value(i), definition)
+        definitions.setdefault(name_of(components.Value(i)), definition)
+    for repeat in repeats:
+        placed = tool.AddComponent(top, definitions[repeat.name], repeat.loc.wrapped)
+        TDataStd_Name.Set_s(placed, TCollection_ExtendedString(repeat.name))
+    tool.UpdateAssemblies()
     write_doc(doc, path)
     restore_blank_names(path)
 
@@ -407,6 +478,11 @@ def main() -> None:
     # The messy file is *meant* to copy geometry: one solid per part.
     write_step(messy_tree(), HERE / "drone_messy.step")
     check_instancing(HERE / "drone_messy.step", len(parts), len(parts))
+
+    shared = shared_tree()
+    write_shared_step(shared, HERE / "drone_shared.step")
+    # 5 unique solids; occurrences: plate + 2 ArmUnit placements + 5 parts inside the unit.
+    check_instancing(HERE / "drone_shared.step", count_unique(flatten(shared, cq.Location())), 8)
 
     bracket = make_bracket()
     write_single_part(bracket, "Bracket", "#7f8c8d", HERE / "bracket.step")

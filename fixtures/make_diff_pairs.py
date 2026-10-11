@@ -32,24 +32,13 @@ import cadquery as cq
 import numpy as np
 from kyumi import Model, Node, Shape, import_step, load
 from make_fixtures import (
-    ARM_LENGTH,
-    ARM_THICKNESS,
-    CORNERS,
     HERE,
-    PLATE_SIZE,
-    PLATE_THICKNESS,
-    SCREW_ALONG,
     Group,
     Part,
     Proto,
-    arm_tip,
+    arm_units_tree,
     at,
     drone_tree,
-    make_arm,
-    make_motor,
-    make_plate,
-    make_propeller,
-    make_screw,
     name_of,
     restore_blank_names,
     write_doc,
@@ -260,34 +249,6 @@ def junk_all_names(tree: Group, expected: Expected) -> None:
         expected.change(old_key, after[node_id], "renamed")
 
 
-def arm_units_tree() -> Group:
-    """A drone built from four identical "ArmUnit" groups: same name, same children.
-
-    Like CPT17's eight "LegUnit" groups: names cannot tell the groups apart, only
-    where their children sit can.
-    """
-    plate, arm = Proto("CenterPlate", make_plate()), Proto("Arm", make_arm())
-    motor, prop, screw = (
-        Proto("Motor", make_motor()),
-        Proto("Prop", make_propeller()),
-        Proto("Screw", make_screw()),
-    )
-    arm_start, z = PLATE_SIZE / 2 - 20, ARM_THICKNESS
-    units: list[Part | Group] = [Part("CenterPlate", plate, at(), "#222222")]
-    for angle in CORNERS.values():
-        x, y = arm_tip(angle, arm_start)
-        children: list[Part | Group] = [
-            Part("Arm", arm, at(0, 0, z / 2), "#333333"),
-            Part("Motor", motor, at(ARM_LENGTH - 10, 0, z), "#b0b0b0"),
-            Part("Prop", prop, at(ARM_LENGTH - 10, 0, z + 21), "#ff7a00"),
-        ]
-        children += [
-            Part("Screw", screw, at(along - arm_start, 0, z), "#888888") for along in SCREW_ALONG
-        ]
-        units.append(Group("ArmUnit", at(x, y, PLATE_THICKNESS / 2, angle), children))
-    return Group("Drone", at(), units)
-
-
 def move_third_arm_unit(tree: Group, expected: Expected) -> None:
     unit = [c for c in tree.children if c.name == "ArmUnit"][2]
     unit.loc = cq.Location(cq.Vector(0, 0, 5)) * unit.loc
@@ -352,6 +313,7 @@ class Placement:
     is_leaf: bool
     index: int  # among same-named siblings
     sibling_names: list[str]
+    under_shared: bool  # some ancestor is a subassembly definition placed more than once
 
 
 def read_doc(path: Path) -> TDocStd_Document:
@@ -376,26 +338,28 @@ def placements(doc: TDocStd_Document) -> list[Placement]:
     tool = XCAFDoc_DocumentTool.ShapeTool_s(doc.Main())
     found: list[Placement] = []
 
-    def visit(label: TDF_Label, key: Key, index: int, sibling_names: list[str]) -> None:
+    def visit(label: TDF_Label, key: Key, index: int, siblings: list[str], shared: bool) -> None:
         definition = TDF_Label()
         if not XCAFDoc_ShapeTool.GetReferredShape_s(label, definition):
             definition = label
         if XCAFDoc_ShapeTool.IsReference_s(label):
             is_leaf = not XCAFDoc_ShapeTool.IsAssembly_s(definition)
-            found.append(Placement(key, label, is_leaf, index, sibling_names))
+            found.append(Placement(key, label, is_leaf, index, siblings, shared))
         if not XCAFDoc_ShapeTool.IsAssembly_s(definition):
             return
+        if XCAFDoc_ShapeTool.GetUsers_s(definition, TDF_LabelSequence(), False) > 1:
+            shared = True
         children = TDF_LabelSequence()
         XCAFDoc_ShapeTool.GetComponents_s(definition, children)
         names = [name_of(children.Value(i)) for i in range(1, children.Length() + 1)]
         for i, name in enumerate(names):
             index = names[:i].count(name)
-            visit(children.Value(i + 1), [*key, with_index(name, index)], index, names)
+            visit(children.Value(i + 1), [*key, with_index(name, index)], index, names, shared)
 
     roots = TDF_LabelSequence()
     tool.GetFreeShapes(roots)
     for i in range(1, roots.Length() + 1):
-        visit(roots.Value(i), [name_of(roots.Value(i))], 0, [])
+        visit(roots.Value(i), [name_of(roots.Value(i))], 0, [], False)
     return found
 
 
@@ -404,14 +368,23 @@ def pick_targets(doc: TDocStd_Document) -> list[Key]:
 
     Only parts that are the *last* of their same-named siblings qualify, so
     renaming or deleting one never shifts another node's "#k" index; blank
-    names are skipped too.
+    names are skipped too. So are parts inside a subassembly whose definition
+    is placed more than once: editing one of those edits every copy.
     """
     usable: list[Key] = []
+    skipped = 0
     for p in placements(doc):
+        if not p.is_leaf:
+            continue
+        if p.under_shared:
+            skipped += 1
+            continue
         name = name_of(p.label)
         is_last = p.index == p.sibling_names.count(name) - 1
-        if p.is_leaf and is_last and all(p.key):
+        if is_last and all(p.key):
             usable.append(p.key)
+    if skipped:
+        print(f"  skipped {skipped} parts inside subassemblies that are placed more than once")
     usable.sort()
     if not usable:
         return []
