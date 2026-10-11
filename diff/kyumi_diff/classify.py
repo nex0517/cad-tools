@@ -83,8 +83,10 @@ def warn_if_generators_differ(old: Model, new: Model) -> None:
     """The generator version is bumped whenever measurement or fingerprint code
     changes (docs/format.md), so two packages with different (or no) versions may
     disagree on a fingerprint for the same geometry."""
-    complete = all(g and g.get("name") and g.get("version") for g in (old.generator, new.generator))
-    if not complete or old.generator != new.generator:
+    a, b = (
+        ((g or {}).get("name"), (g or {}).get("version")) for g in (old.generator, new.generator)
+    )
+    if None in (*a, *b) or a != b:
         print(
             f"warning: the packages were written by different generators or versions "
             f"({describe(old.generator)} vs {describe(new.generator)}); fingerprints may "

@@ -182,6 +182,8 @@ def test_different_or_missing_generator_versions_print_a_warning(
     assert "different generators or versions" in capsys.readouterr().err
     diff(v1, replace(v1, generator={"name": "other-tool", "version": "0.1.0"}))
     assert "different generators or versions" in capsys.readouterr().err
+    diff(v1, replace(v1, generator={**v1.generator, "build": "ci"}))  # extra keys are fine
+    assert capsys.readouterr().err == ""
     diff(replace(v1, generator=None), v1)
     assert "'modified' results could be false" in capsys.readouterr().err
     diff(v1, v1)
