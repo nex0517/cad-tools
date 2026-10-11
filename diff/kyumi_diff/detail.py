@@ -12,6 +12,7 @@ from __future__ import annotations
 import itertools
 import json
 import tempfile
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -55,8 +56,8 @@ class Detail:
     added_glb: bytes | None = None
     removed_glb: bytes | None = None
 
-    def to_json(self, files: dict[str, str | None]) -> str:
-        data = {
+    def to_dict(self, files: dict[str, str | None]) -> dict:
+        return {
             "key": self.key,
             "old_id": self.old_id,
             "new_id": self.new_id,
@@ -68,7 +69,9 @@ class Detail:
             "frame": FRAME,
             "files": files,
         }
-        return json.dumps(data, indent=2) + "\n"
+
+    def to_json(self, files: dict[str, str | None]) -> str:
+        return json.dumps(self.to_dict(files), indent=2) + "\n"
 
 
 def parse_key(text: str) -> Key:
@@ -263,19 +266,61 @@ def detail(old: Model, new: Model, result: Diff, key: Key) -> Detail:
 def write_detail(found: Detail, out_dir: Path) -> list[Path]:
     """detail.json plus added.glb / removed.glb (only the non-empty ones)."""
     out_dir.mkdir(parents=True, exist_ok=True)
+    files, written = write_meshes(found, out_dir, prefix="")
+    json_path = out_dir / "detail.json"
+    json_path.write_text(found.to_json(files), encoding="utf-8")
+    return [json_path, *written]
+
+
+def write_meshes(
+    found: Detail, out_dir: Path, prefix: str
+) -> tuple[dict[str, str | None], list[Path]]:
+    """`<prefix>added.glb` / `<prefix>removed.glb` for the non-empty sides; the
+    json `files` entry is null for an empty one."""
     files: dict[str, str | None] = {"added": None, "removed": None}
     written: list[Path] = []
     for side, data in (("added", found.added_glb), ("removed", found.removed_glb)):
-        path = out_dir / f"{side}.glb"
+        path = out_dir / f"{prefix}{side}.glb"
         if data is None:
             path.unlink(missing_ok=True)  # never leave an earlier run's mesh behind
             continue
         path.write_bytes(data)
         files[side] = path.name
         written.append(path)
-    json_path = out_dir / "detail.json"
-    json_path.write_text(found.to_json(files), encoding="utf-8")
-    return [json_path, *written]
+    return files, written
+
+
+def detail_all(old: Model, new: Model, result: Diff, out_dir: Path) -> Path:
+    """`kyumi diff --detail-all`: the detail of every `modified` part, computed ahead
+    for the viewer. Writes `details.json` and `<new_id>.added.glb` /
+    `<new_id>.removed.glb` into `out_dir` and returns the json path. A failed
+    boolean is one "could not compute" entry; missing breps stop before anything
+    is written."""
+    changes = [c for c in result.changes if "modified" in c.tags]
+    for change in changes:  # fail early, before touching out_dir
+        for model, node_id in ((old, change.old_id), (new, change.new_id)):
+            if model.shapes[model.node(node_id).shape].brep is None:
+                read_brep(model, model.shapes[model.node(node_id).shape])
+    out_dir.mkdir(parents=True, exist_ok=True)
+    for stale in out_dir.glob("*.glb"):
+        stale.unlink()
+    parts = []
+    for change in changes:
+        start = time.perf_counter()
+        found = detail(old, new, result, change.new)
+        seconds = time.perf_counter() - start
+        files, _ = write_meshes(found, out_dir, prefix=f"{found.new_id}.")
+        parts.append({**found.to_dict(files), "seconds": round(seconds, 2)})
+        print(f"detail  {' › '.join(found.key)}: {found.status} ({seconds:.1f} s)")
+    json_path = out_dir / "details.json"
+    data = {"old": package_name(old), "new": package_name(new), "parts": parts}
+    json_path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    print(f"wrote {json_path} ({len(parts)} modified {'part' if len(parts) == 1 else 'parts'})")
+    return json_path
+
+
+def package_name(model: Model) -> str:
+    return model.path.name if model.path is not None else model.source_file
 
 
 def render_detail(found: Detail, written: list[Path]) -> str:

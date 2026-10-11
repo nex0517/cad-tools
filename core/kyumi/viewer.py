@@ -3,18 +3,41 @@
 The browser gets three things: the page itself, `/model.json` (the tree with
 world transforms, so the page does no matrix maths), and `/meshes/<id>.glb`
 straight out of the .kyumi zip. Nothing is written to disk.
+
+Diff mode (`kyumi view OLD NEW`) adds `/changes.json`, `/old/meshes/<id>.glb`
+for removed parts and `/detail/<new id>/<side>.glb`; the CLI works all of that
+out with the diff package and hands it in as a `DiffView`, so this module never
+imports kyumi_diff.
 """
 
 from __future__ import annotations
 
 import json
 import webbrowser
+from dataclasses import dataclass, field
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
 from kyumi.model import Model
 
 PAGE = Path(__file__).with_name("viewer.html")
+
+
+@dataclass
+class DiffView:
+    """Everything diff mode serves besides the new model (built by kyumi_diff.view)."""
+
+    changes: dict  # what /changes.json answers
+    old: Model  # removed parts' meshes come from here
+    old_meshes: set[str]  # the only old files served, e.g. {"meshes/s3.glb"}
+    details: dict[str, dict[str, bytes | None]] = field(default_factory=dict)  # new id -> side
+
+    def detail_glb(self, path: str) -> bytes | None:
+        """`/detail/<new id>/<side>.glb` for a verified, non-empty side; else None."""
+        parts = path.split("/")
+        if len(parts) != 4 or parts[:2] != ["", "detail"] or not parts[3].endswith(".glb"):
+            return None
+        return self.details.get(parts[2], {}).get(parts[3][: -len(".glb")])
 
 
 def model_json(model: Model) -> dict:
@@ -49,7 +72,7 @@ def model_json(model: Model) -> dict:
     return {"file": model.source_file, "nodes": nodes, "shapes": shapes}
 
 
-def make_handler(model: Model) -> type[BaseHTTPRequestHandler]:
+def make_handler(model: Model, view: DiffView | None = None) -> type[BaseHTTPRequestHandler]:
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:  # noqa: N802 (name fixed by http.server)
             # A page on another site can make the browser call 127.0.0.1, but
@@ -62,6 +85,15 @@ def make_handler(model: Model) -> type[BaseHTTPRequestHandler]:
                 self.reply(200, "application/json", json.dumps(model_json(model)).encode())
             elif self.path.startswith("/meshes/") and self.path[1:] in mesh_paths(model):
                 self.reply(200, "model/gltf-binary", model.read(self.path[1:]))
+            elif view is not None and self.path == "/changes.json":
+                self.reply(200, "application/json", json.dumps(view.changes).encode())
+            elif view is not None and self.path.startswith("/old/meshes/"):
+                if self.path[len("/old/") :] in view.old_meshes:
+                    self.reply(200, "model/gltf-binary", view.old.read(self.path[len("/old/") :]))
+                else:
+                    self.reply(404, "text/plain", b"not found")
+            elif view is not None and view.detail_glb(self.path) is not None:
+                self.reply(200, "model/gltf-binary", view.detail_glb(self.path))
             else:
                 self.reply(404, "text/plain", b"not found")
 
@@ -86,13 +118,16 @@ def mesh_paths(model: Model) -> set[str]:
     return {s.mesh for s in model.shapes.values() if s.mesh}
 
 
-def serve(model: Model, port: int = 8765, open_browser: bool = True) -> None:
+def serve(
+    model: Model, port: int = 8765, open_browser: bool = True, view: DiffView | None = None
+) -> None:
     try:
-        server = HTTPServer(("127.0.0.1", port), make_handler(model))
+        server = HTTPServer(("127.0.0.1", port), make_handler(model, view))
     except OSError as error:
         raise ValueError(f"cannot listen on port {port} ({error.strerror}); try --port 0") from None
     url = f"http://127.0.0.1:{server.server_port}/"
-    print(f"viewing {model.source_file} at {url}  (Ctrl+C to stop)")
+    what = model.source_file if view is None else f"{view.old.source_file} → {model.source_file}"
+    print(f"viewing {what} at {url}  (Ctrl+C to stop)")
     if open_browser:
         webbrowser.open(url)
     try:
