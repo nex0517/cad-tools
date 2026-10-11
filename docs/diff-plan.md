@@ -151,9 +151,11 @@ until a real file shows it.
 4. **Alignment, only when needed.** A real edit moves the centre of mass too
    (the hole pair's centre shifts), so aligning by centre first would create
    fake slivers. Compare as-is first; only if the result is implausible
-   (added + removed > 2·|ΔV| + 0.1 % of the part's volume — a brep re-exported
-   about a new origin "adds" and "removes" nearly the whole part) try moving
-   the old brep onto the new one: centre of mass alone, then centre + principal
+   (added + removed > 2·|ΔV| + 0.1 % of the part's volume) **and** large (more
+   than 10 % of the part — a brep re-exported about a new origin "adds" and
+   "removes" a good part of the shape, while a hole that moved across a
+   symmetric plate is implausible too but small, and aligning would hide it)
+   try moving the old brep onto the new one: centre of mass alone, then centre + principal
    axes. Axes are ambiguous (sign flips always; order too when two moments are
    within 1 %), so every proper rotation among those is tried and the first
    plausible one, else the smallest total, is kept; `detail.json` says
@@ -165,7 +167,9 @@ until a real file shows it.
    two files behave differently from every other mesh.) Empty results write no
    `.glb`; the file entry is `null`.
 6. Booleans fail on near-coincident faces; a failed one gives status
-   `"could not compute"` (exit 0), never a crash of the whole diff. Every real
+   `"could not compute"` (exit 0), never a crash of the whole diff. A version
+   with no solid at all (a surface model) is `"not a solid"`. "Empty" means
+   the result has no solid, not a volume threshold. Every real
    shape is also compared against *itself* in `core/real_files.py` — the case
    where every face coincides — and the empty / non-empty / failed counts go
    into `docs/real-files.md`.
@@ -231,7 +235,8 @@ removed red (ghosted), moved blue, modified orange; the tree shows tags.
    (`python fixtures/make_diff_pairs.py fixtures/real/x.step`) writes
    no-change / move / delete / rename / modify pairs with expected answers into
    `fixtures/real/pairs/x/` (modify = a small hole through the largest editable
-   part, so `--detail` has a known volume to hit on real files).
+   part whose geometry is placed only once — drilling a shared definition would
+   drill every copy — so `--detail` has a known volume to hit on real files).
 2. **Matching + classification** (`diff/match.py`, `diff/classify.py`) and
    `kyumi diff`, using only the `Model` API. All pairs from step 1 produce
    their expected output. **Not done until it has also run on the real v1/v2

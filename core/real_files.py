@@ -25,13 +25,12 @@ import re
 import sys
 import tempfile
 import time
-import zipfile
 from pathlib import Path
 
 from kyumi import Model, load
 from kyumi.package import import_step
 from kyumi_diff import Diff, agrees, detail, diff
-from kyumi_diff.detail import FAILED, OK, compare, read_brep, volume_of
+from kyumi_diff.detail import FAILED, NOT_SOLID, OK, compare, is_empty, read_brep, solids
 
 ROOT = Path(__file__).resolve().parents[1]
 REAL = ROOT / "fixtures" / "real"
@@ -40,8 +39,8 @@ REPORT = ROOT / "docs" / "real-files.md"
 
 
 COLUMNS = (
-    "file | import | units | nodes | shapes | depth | junk names | coloured | time | "
-    ".kyumi size (with / without breps)"
+    "file | import | units | nodes | shapes | depth | junk names | coloured | "
+    "time (with / without breps) | .kyumi size (with / without breps)"
 )
 JUNK_NAME = re.compile(
     r"^(|\d+|(part|body|solid|component)[ _-]?\d+|part studio \d+)"  # the base name
@@ -60,9 +59,10 @@ def percent(flags: list[bool]) -> str:
 
 def report_line(step: Path, out_dir: Path) -> tuple[str, Model | None]:
     """One table row: counts and quality numbers, or the error that stopped the import."""
-    out = out_dir / (step.stem + ".kyumi")
+    out, lean = out_dir / (step.stem + ".kyumi"), out_dir / (step.stem + "-no-breps.kyumi")
     try:
         timings = import_step(step, out)
+        lean_timings = import_step(step, lean, breps=False)
         model = load(out)
     except Exception as error:  # noqa: BLE001 (any failure is a result worth recording)
         blanks = " |" * (COLUMNS.count("|") - 2)
@@ -81,33 +81,34 @@ def report_line(step: Path, out_dir: Path) -> tuple[str, Model | None]:
         str(max((len(model.path_of(n.id)) for n in model.nodes), default=0)),
         percent([is_junk_name(n.name) for n in leaves]),
         percent([model.color_of(n) is not None for n in leaves]),
-        f"{sum(timings.values()):.1f} s",
-        f"{out.stat().st_size / 1e6:.1f} MB / {size_without_breps(out) / 1e6:.1f} MB",
+        f"{sum(timings.values()):.1f} s / {sum(lean_timings.values()):.1f} s",
+        f"{out.stat().st_size / 1e6:.1f} MB / {lean.stat().st_size / 1e6:.1f} MB",
     ]
     return "| " + " | ".join(cells) + " |", model
 
 
-def size_without_breps(package: Path) -> int:
-    """What the .kyumi would weigh with `--no-breps`, without importing twice."""
-    with zipfile.ZipFile(package) as zf:
-        return sum(i.compress_size for i in zf.infolist() if not i.filename.startswith("breps/"))
-
-
-SELF_COLUMNS = "file | shapes | empty | non-empty | could not compute | time | slowest part"
+SELF_COLUMNS = (
+    "file | shapes | empty | non-empty | could not compute | not a solid | time | slowest part"
+)
 
 
 def self_comparison_line(model: Model) -> str:
-    """Every shape detail-diffed against itself: the result should be empty each time."""
-    counts = {"empty": 0, "non-empty": 0, FAILED: 0}
+    """Every shape detail-diffed against itself: the result should be empty each time.
+    The brep is read twice so the faces coincide without being the same objects
+    (OpenCascade shortcuts a boolean of a shape with itself)."""
+    counts = {"empty": 0, "non-empty": 0, FAILED: 0, NOT_SOLID: 0}
     slowest: tuple[float, str] = (0.0, "")
     start = time.perf_counter()
     for shape in model.shapes.values():
         began = time.perf_counter()
-        brep = read_brep(model, shape)
-        result = compare(brep, brep)
+        brep, twin = read_brep(model, shape), read_brep(model, shape)
+        if solids(brep) == 0:
+            counts[NOT_SOLID] += 1
+            continue
+        result = compare(brep, twin)
         if result is None:
             counts[FAILED] += 1
-        elif volume_of(result[0]) + volume_of(result[1]) > 1e-6:
+        elif not (is_empty(result[0]) and is_empty(result[1])):
             counts["non-empty"] += 1
         else:
             counts["empty"] += 1
@@ -156,7 +157,9 @@ def pair_lines(pair_dir: Path, out_dir: Path) -> list[str]:
 
 
 def detail_check(models: list[Model], result: Diff, modified: list[dict]) -> str:
-    """`--detail` on each modified part: removed - added must equal the expected volume change."""
+    """`--detail` on each modified part. The generator only ever removes material, so
+    removed must be within 1 % of the expected change and added at most 1 % of it
+    (checked separately: slivers on both sides would cancel in a difference)."""
     cells = []
     for change in modified:
         start = time.perf_counter()
@@ -165,12 +168,12 @@ def detail_check(models: list[Model], result: Diff, modified: list[dict]) -> str
         if found.status != OK:
             cells.append(f"{found.status} ({elapsed:.1f} s)")
             continue
-        wanted = change["delta"]["volume"]
-        got = found.added - found.removed
-        verdict = "ok" if abs(got - wanted) <= 0.01 * abs(wanted) else "MISMATCH"
+        wanted = -change["delta"]["volume"]
+        ok = abs(found.removed - wanted) <= 0.01 * wanted and found.added <= 0.01 * wanted
+        verdict, aligned = ("ok" if ok else "MISMATCH"), (", aligned" if found.aligned else "")
         cells.append(
             f"{verdict}: added {found.added:.1f}, removed {found.removed:.1f} mm³ "
-            f"(expected {wanted:+.1f}) in {elapsed:.1f} s"
+            f"(expected {wanted:.1f}){aligned} in {elapsed:.1f} s"
         )
     return "; ".join(cells)
 
@@ -200,7 +203,7 @@ def main() -> None:
                 lines.append(line)
                 if model is not None:
                     self_lines.append(self_comparison_line(model))
-        lines += ["", "## Every shape against itself", "", f"| {SELF_COLUMNS} |", "|---" * 7 + "|"]
+        lines += ["", "## Every shape against itself", "", f"| {SELF_COLUMNS} |", "|---" * 8 + "|"]
         lines += self_lines
     pair_dirs = sorted(p for p in PAIRS.glob("*") if p.is_dir()) if PAIRS.is_dir() else []
     if pair_dirs:

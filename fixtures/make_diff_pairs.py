@@ -345,6 +345,7 @@ class Placement:
     index: int  # among same-named siblings
     sibling_names: list[str]
     under_shared: bool  # some ancestor is a subassembly definition placed more than once
+    shared_definition: bool  # this node's own definition is placed more than once
 
 
 def read_doc(path: Path) -> TDocStd_Document:
@@ -373,12 +374,13 @@ def placements(doc: TDocStd_Document) -> list[Placement]:
         definition = TDF_Label()
         if not XCAFDoc_ShapeTool.GetReferredShape_s(label, definition):
             definition = label
+        users = XCAFDoc_ShapeTool.GetUsers_s(definition, TDF_LabelSequence(), False)
         if XCAFDoc_ShapeTool.IsReference_s(label):
             is_leaf = not XCAFDoc_ShapeTool.IsAssembly_s(definition)
-            found.append(Placement(key, label, is_leaf, index, siblings, shared))
+            found.append(Placement(key, label, is_leaf, index, siblings, shared, users > 1))
         if not XCAFDoc_ShapeTool.IsAssembly_s(definition):
             return
-        if XCAFDoc_ShapeTool.GetUsers_s(definition, TDF_LabelSequence(), False) > 1:
+        if users > 1:
             shared = True
         children = TDF_LabelSequence()
         XCAFDoc_ShapeTool.GetComponents_s(definition, children)
@@ -428,11 +430,16 @@ def pick_targets(doc: TDocStd_Document) -> list[Key]:
 
 
 def pick_largest(doc: TDocStd_Document) -> Key | None:
-    """Key of the editable part with the most volume: the one to drill."""
+    """Key of the editable part with the most volume: the one to drill. Parts whose
+    definition is placed more than once are skipped: drilling one drills every copy."""
     usable = editable_parts(doc)
-    if not usable:
+    drillable = [p for p in usable if not p.shared_definition]
+    if len(drillable) < len(usable):
+        skipped = len(usable) - len(drillable)
+        print(f"  not drilling {skipped} parts whose geometry is placed more than once")
+    if not drillable:
         return None
-    return max(usable, key=lambda p: volume_of(definition_shape(p.label))).key
+    return max(drillable, key=lambda p: volume_of(definition_shape(p.label))).key
 
 
 def definition_shape(label: TDF_Label) -> TopoDS_Shape:
@@ -488,6 +495,8 @@ def xcaf_drill(doc: TDocStd_Document, key: Key, expected: Expected) -> None:
     tool = XCAFDoc_DocumentTool.ShapeTool_s(doc.Main())
     label, definition = placement(doc, key).label, TDF_Label()
     XCAFDoc_ShapeTool.GetReferredShape_s(label, definition)
+    if XCAFDoc_ShapeTool.GetUsers_s(definition, TDF_LabelSequence(), False) > 1:
+        raise SystemExit(f"{' / '.join(key)}: placed more than once; drilling it drills every copy")
     shape = XCAFDoc_ShapeTool.GetShape_s(definition)
     box = Bnd_Box()
     BRepBndLib.Add_s(shape, box, False)
@@ -529,8 +538,12 @@ def make_pairs(step: Path, out_dir: Path) -> list[str]:
             ("rename", f"{' / '.join(rename)} renamed", xcaf_rename, rename),
             ("move", f"{' / '.join(move)} moved 5 mm along x", xcaf_move, move),
             ("delete", f"{' / '.join(delete)} deleted", xcaf_delete, delete),
-            ("modify", f"small hole drilled through {' / '.join(largest)}", xcaf_drill, largest),
         ]
+        if largest is not None:
+            note = f"small hole drilled through {' / '.join(largest)}"
+            plan.append(("modify", note, xcaf_drill, largest))
+        else:
+            print(f"{step.name}: every editable part is placed more than once; no modify pair")
     else:
         print(f"{step.name}: no placed parts to move, rename or delete; writing nochange only")
     for change, note, apply, key in plan:

@@ -25,6 +25,8 @@ from OCP.BRepGProp import BRepGProp
 from OCP.BRepTools import BRepTools
 from OCP.gp import gp_Trsf
 from OCP.GProp import GProp_GProps
+from OCP.TopAbs import TopAbs_SOLID
+from OCP.TopExp import TopExp_Explorer
 from OCP.TopoDS import TopoDS_Shape
 from OCP.TopTools import TopTools_ListOfShape
 
@@ -32,10 +34,11 @@ from kyumi_diff.classify import Diff
 from kyumi_diff.index import KEY_FORMAT, Index, Key
 
 FUZZY = 0.001  # mm: booleans treat faces closer than this as coincident
-EMPTY = 1e-6  # mm³: a result below this is "nothing"
 SAME_MOMENT = 0.01  # relative: principal moments this close make the axes ambiguous
+ALIGN_MIN = 0.10  # of the part's volume: smaller as-is results are edits, not a moved origin
 OK = "ok"
 FAILED = "could not compute"
+NOT_SOLID = "not a solid"
 FRAME = "the new part's own coordinates; place with node new_id's world transform"
 
 
@@ -71,7 +74,7 @@ class Detail:
 def parse_key(text: str) -> Key:
     """`Drone/Frame/CenterPlate` or `Drone › Frame › CenterPlate` (a name containing
     the separator itself cannot be typed; use the key from diff.json instead)."""
-    parts = [p.strip() for p in text.replace("›", "/").split("/")]
+    parts = text.replace(" › ", "/").replace("›", "/").split("/")  # names keep their own spaces
     if not all(parts):
         raise ValueError(f"empty name in key {text!r}; keys are {KEY_FORMAT}")
     return parts
@@ -120,6 +123,19 @@ def volume_of(shape: TopoDS_Shape) -> float:
     return props.Mass()
 
 
+def solids(shape: TopoDS_Shape) -> int:
+    count, explorer = 0, TopExp_Explorer(shape, TopAbs_SOLID)
+    while explorer.More():
+        count += 1
+        explorer.Next()
+    return count
+
+
+def is_empty(shape: TopoDS_Shape) -> bool:
+    """A boolean result with no solid in it is "nothing" (its volume may be a rounding sliver)."""
+    return solids(shape) == 0
+
+
 def cut(a: TopoDS_Shape, b: TopoDS_Shape) -> TopoDS_Shape | None:
     """a minus b, or None when OpenCascade cannot do it."""
     op = BRepAlgoAPI_Cut()
@@ -149,6 +165,16 @@ def plausible(added: float, removed: float, volume_change: float, volume: float)
     """A real edit changes the volume by about what it adds minus what it removes; a
     brep re-exported about a new origin "adds" and "removes" nearly the whole part."""
     return added + removed <= 2 * abs(volume_change) + 0.001 * volume
+
+
+def needs_alignment(added: float, removed: float, volume_change: float, volume: float) -> bool:
+    """Implausible *and* big: a hole that moved across a plate is also implausible
+    (volume unchanged, material on both sides), but aligning would hide it, so only a
+    result worth a good part of the whole shape is treated as a moved origin."""
+    return (
+        not plausible(added, removed, volume_change, volume)
+        and added + removed > ALIGN_MIN * volume
+    )
 
 
 def principal_axes(shape: TopoDS_Shape) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -207,10 +233,13 @@ def detail(old: Model, new: Model, result: Diff, key: Key) -> Detail:
     old_brep, new_brep = read_brep(old, o_shape), read_brep(new, n_shape)
     volume_change = n_shape.volume - o_shape.volume
     found = Detail(key, o_id, n_id, FAILED, 0.0, 0.0, volume_change, False)
+    if solids(old_brep) == 0 or solids(new_brep) == 0:
+        found.status = NOT_SOLID
+        return found
 
     best = compare(old_brep, new_brep)
     volumes = (volume_of(best[0]), volume_of(best[1])) if best else None
-    if best is not None and not plausible(*volumes, volume_change, o_shape.volume):
+    if best is not None and needs_alignment(*volumes, volume_change, o_shape.volume):
         for matrix in alignments(old_brep, new_brep):
             attempt = compare(transformed(old_brep, matrix), new_brep)
             if attempt is None:
@@ -224,9 +253,9 @@ def detail(old: Model, new: Model, result: Diff, key: Key) -> Detail:
         return found
     found.status = OK
     found.added, found.removed = volumes
-    if found.added > EMPTY:
+    if not is_empty(best[0]):
         found.added_glb = mesh_glb(best[0], n_shape.size)
-    if found.removed > EMPTY:
+    if not is_empty(best[1]):
         found.removed_glb = mesh_glb(best[1], n_shape.size)
     return found
 
@@ -237,11 +266,13 @@ def write_detail(found: Detail, out_dir: Path) -> list[Path]:
     files: dict[str, str | None] = {"added": None, "removed": None}
     written: list[Path] = []
     for side, data in (("added", found.added_glb), ("removed", found.removed_glb)):
-        if data is not None:
-            path = out_dir / f"{side}.glb"
-            path.write_bytes(data)
-            files[side] = path.name
-            written.append(path)
+        path = out_dir / f"{side}.glb"
+        if data is None:
+            path.unlink(missing_ok=True)  # never leave an earlier run's mesh behind
+            continue
+        path.write_bytes(data)
+        files[side] = path.name
+        written.append(path)
     json_path = out_dir / "detail.json"
     json_path.write_text(found.to_json(files), encoding="utf-8")
     return [json_path, *written]
@@ -249,8 +280,10 @@ def write_detail(found: Detail, out_dir: Path) -> list[Path]:
 
 def render_detail(found: Detail, written: list[Path]) -> str:
     name = " › ".join(found.key)
-    if found.status != OK:
+    if found.status == FAILED:
         return f"detail  {name}: {found.status} (the boolean failed; see detail.json)"
+    if found.status == NOT_SOLID:
+        return f"detail  {name}: {found.status} (a version has no solid; see detail.json)"
     text = f"detail  {name}: added {found.added:.1f} mm³, removed {found.removed:.1f} mm³"
     if found.aligned:
         text += " (old brep aligned by centre and axes first)"

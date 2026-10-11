@@ -63,11 +63,18 @@ def test_resize_is_added_material_only(packages: dict[str, Path]) -> None:
     assert found.removed == pytest.approx(0, abs=1e-6)
 
 
+def moved_key(pair: str) -> list[str]:
+    expected = json.loads((PAIRS / f"{pair}.expected.json").read_text(encoding="utf-8"))
+    return next(c["new"] for c in expected["changes"] if "moved" in c["tags"])
+
+
 @pytest.mark.parametrize("pair", ["move", "rotate"])
 def test_a_part_that_only_moved_has_nothing_on_either_side(
     packages: dict[str, Path], pair: str
 ) -> None:
-    found = compared(packages, pair, PLATE)
+    key = moved_key(pair) if pair == "move" else PLATE  # rotate turns the whole Frame
+    assert key != PLATE or pair == "rotate"
+    found = compared(packages, pair, key)
     assert found.status == OK and not found.aligned
     assert found.added == 0 and found.removed == 0
     assert found.added_glb is None and found.removed_glb is None
@@ -91,6 +98,7 @@ def test_missing_breps_say_how_to_fix_it(packages: dict[str, Path]) -> None:
 def test_parse_key_accepts_both_separators() -> None:
     assert parse_key("Drone/ArmUnit#2/Screw#1") == ["Drone", "ArmUnit#2", "Screw#1"]
     assert parse_key("Drone › ArmUnit#2 › Screw#1") == ["Drone", "ArmUnit#2", "Screw#1"]
+    assert parse_key("Drone/ Plate /x") == ["Drone", " Plate ", "x"]  # names keep their spaces
     with pytest.raises(ValueError, match="empty name"):
         parse_key("Drone//Frame")
 
@@ -135,6 +143,36 @@ def test_a_failed_boolean_is_reported_not_raised(
     written = json.loads((tmp_path / "detail.json").read_text(encoding="utf-8"))
     assert written["status"] == FAILED and written["files"] == {"added": None, "removed": None}
     assert not list(tmp_path.glob("*.glb"))
+
+
+def test_an_earlier_runs_meshes_are_removed(packages: dict[str, Path], tmp_path: Path) -> None:
+    out_dir = tmp_path / "detail"
+    main(
+        [
+            "diff",
+            str(packages["v1"]),
+            str(packages["hole"]),
+            "--detail",
+            "/".join(PLATE),
+            "--out-dir",
+            str(out_dir),
+        ]
+    )
+    assert (out_dir / "removed.glb").exists()
+    main(
+        [
+            "diff",
+            str(packages["v1"]),
+            str(packages["move"]),
+            "--detail",
+            "/".join(PLATE),
+            "--out-dir",
+            str(out_dir),
+        ]
+    )
+    assert not (out_dir / "removed.glb").exists()
+    written = json.loads((out_dir / "detail.json").read_text(encoding="utf-8"))
+    assert written["files"] == {"added": None, "removed": None}
 
 
 def re_exported(package: Path, out: Path, shape_id: str) -> None:
