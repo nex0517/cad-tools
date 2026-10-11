@@ -137,14 +137,21 @@ if (diff) {
     scene.add(mesh);
     ghosts.set("old:" + g.old_id, mesh);
   }
-  // A thin line from where a moved part (or group) was to where it is now.
-  const lineMaterial = new THREE.LineBasicMaterial({ color: COLOURS.moved });
+  // A thin line from where a moved part (or group) was to where it is now, with a
+  // dot at the old centre. Drawn on top: a 5 mm move is shorter than the part, so
+  // the line would otherwise be hidden inside it.
+  const lineMaterial = new THREE.LineBasicMaterial({ color: 0xffffff, depthTest: false, transparent: true, opacity: 0.9 });
+  const dotMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff, depthTest: false, transparent: true, opacity: 0.9 });
+  const extent = new THREE.Box3().setFromObject(scene).getSize(new THREE.Vector3()).length();
   for (const m of diff.moves) {
     if (m.distance < 0.01) continue;
-    const geo = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(...m.from), new THREE.Vector3(...m.to)]);
-    const line = new THREE.Line(geo, lineMaterial);
-    scene.add(line);
-    moveLines.push(line);
+    const from = new THREE.Vector3(...m.from), to = new THREE.Vector3(...m.to);
+    const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints([from, to]), lineMaterial);
+    const dot = new THREE.Mesh(new THREE.SphereGeometry(extent / 400, 12, 8), dotMaterial);
+    dot.position.copy(from);
+    line.renderOrder = dot.renderOrder = 10;
+    scene.add(line, dot);
+    moveLines.push(line, dot);
   }
 }
 
@@ -227,7 +234,7 @@ function select(id) {
   for (const [nodeId, mesh] of meshes) {
     const on = lit.has(nodeId);
     mesh.material.emissive.set(on ? HIGHLIGHT : 0x000000);
-    mesh.material.emissiveIntensity = on ? 0.35 : 0;
+    mesh.material.emissiveIntensity = on ? 0.2 : 0;  // still shows the change colour
     mesh.material.opacity = 1;
   }
   for (const [ghostId, mesh] of ghosts) {
