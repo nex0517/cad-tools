@@ -25,7 +25,7 @@ MIN_SCORE = 0.3
 # that could plausibly be the same part slightly moved, however big the assembly.
 # A fingerprint shared by more copies than this (1,280 screws in a tiled drone) is
 # no longer a useful lookup on its own; those copies are only found through the grid.
-MAX_FINGERPRINT_BUCKET = 64
+MAX_BUCKET = 64  # a name or fingerprint shared by more copies is found through the grid only
 
 Cell = tuple[int, int, int]
 
@@ -53,12 +53,12 @@ def match_leaves(old: Index, new: Index) -> tuple[dict[str, str], dict[str, floa
     scored: list[tuple[float, str, str]] = []
     for n in new.leaves:
         candidates: dict[str, Node] = {}
-        for o in by_name.get(n.name, []) if n.name else []:
-            candidates[o.id] = o
+        same_name = by_name.get(n.name, []) if n.name else []
         same_fingerprint = by_fingerprint.get(new.model.shapes[n.shape].fingerprint, [])
-        if len(same_fingerprint) <= MAX_FINGERPRINT_BUCKET:
-            for o in same_fingerprint:
-                candidates[o.id] = o
+        for bucket in (same_name, same_fingerprint):
+            if len(bucket) <= MAX_BUCKET:
+                for o in bucket:
+                    candidates[o.id] = o
         for cell in neighbourhood(cell_of(new.center[n.id], cell_size)):
             for o in by_cell.get(cell, []):
                 candidates[o.id] = o

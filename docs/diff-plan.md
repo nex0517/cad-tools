@@ -60,9 +60,11 @@ position of the shape's `center`, cell size = the median part's bounding-box
 diagonal, including the 26 neighbouring cells). A new leaf's candidates are the
 union of the three lookups. Typical candidate count: 1–10. Two things keep
 that true on big models: the cell is sized by the *part*, not the model (5 % of
-a 190 m fleet's diagonal would put a whole drone in one cell), and a
-fingerprint shared by more than 64 copies (1,280 identical screws) is no longer
-used as a lookup on its own — those copies are only found through the grid.
+a 190 m fleet's diagonal would put a whole drone in one cell), and a name or
+a fingerprint shared by more than 64 copies (162 drones with the same part
+names, 1,280 identical screws) is no longer used as a lookup on its own — those
+copies are only found through the grid. That cap took the 5,000-part test from
+850 k scored pairs (4.6–4.9 s) to 0.4 s including `load()`.
 
 **Rule: among parts with the same fingerprint, position beats name.** Two
 identical props that trade places are the *same* props with swapped labels
@@ -120,9 +122,14 @@ same-named `ArmUnit` groups, one moved 5 mm) checks exactly this.
   differs by more than 0.1 % or a face count differs.
 - A pair can carry several tags (moved + renamed).
 
-Unmatched old leaves → **removed**; unmatched new leaves → **added**. If an
-added and a removed node share a fingerprint, report it as **moved far**
-(moved beyond the candidate grid) rather than as two changes.
+Unmatched old leaves → **removed**; unmatched new leaves → **added**. There
+is no separate "moved far" tag: a part moved beyond the grid is still a
+candidate through its fingerprint, and a same-fingerprint pair scores at least
+0.40 (> the 0.30 cut-off) however far apart, so it matches and is reported as
+**moved** with its distance. The one case this drops: a part moved far while
+more than 64 copies of its name *and* its fingerprint exist (the grid is then
+the only lookup), which comes out as added + removed. Not worth a second pass
+until a real file shows it.
 
 ### 3. Detail diff (one pair, on request)
 

@@ -75,6 +75,20 @@ def test_renamed_pair_matches_every_part_without_names(cache: Path) -> None:
     }
 
 
+def test_a_part_moved_far_beyond_the_grid_is_still_one_move(cache: Path) -> None:
+    v1 = imported(PAIRS / "v1.step", cache)
+    motor = next(n for n in v1.nodes if n.name == "Motor_FR")
+    far = replace(
+        motor, transform=[*motor.transform[:3], motor.transform[3] + 2000.0, *motor.transform[4:]]
+    )
+    v2 = replace(v1, nodes=[far if n is motor else n for n in v1.nodes])
+    result = diff(v1, v2)
+    assert (
+        result.summary["moved"] == 1 and result.summary["added"] == result.summary["removed"] == 0
+    )
+    assert result.changes[0].delta["distance"] == 2000.0
+
+
 def test_swap_is_two_renames(cache: Path) -> None:
     result = diff(imported(PAIRS / "v1.step", cache), imported(PAIRS / "swap.step", cache))
     assert [c.tags for c in result.changes] == [["renamed"], ["renamed"]]
