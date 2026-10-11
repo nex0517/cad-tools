@@ -41,6 +41,13 @@ ARM_LENGTH = 100.0
 PLATE_SIZE = 80.0
 PLATE_THICKNESS = 3.0
 ARM_THICKNESS = 4.0
+# Screws sit this far out along each arm (measured from the drone's centre) and
+# pass through clearance holes in both the arm and the plate.
+SCREW_ALONG = (PLATE_SIZE / 2 - 14, PLATE_SIZE / 2 - 6)
+SCREW_HOLE = 3.2
+# Standoffs stand on the plate's axes, between the arms, holding the board up.
+STANDOFF_HEIGHT = 20.0
+STANDOFF_AT = [(15.25, 0.0), (-15.25, 0.0), (0.0, 15.25), (0.0, -15.25)]
 
 
 @dataclass
@@ -70,14 +77,19 @@ class Group:
 
 
 def make_plate() -> cq.Workplane:
-    return (
-        cq.Workplane().box(PLATE_SIZE, PLATE_SIZE, PLATE_THICKNESS).faces(">Z").workplane().hole(20)
-    )
+    plate = cq.Workplane().box(PLATE_SIZE, PLATE_SIZE, PLATE_THICKNESS)
+    screw_holes = [arm_tip(angle, along) for angle in CORNERS.values() for along in SCREW_ALONG]
+    top = plate.faces(">Z").workplane()
+    return top.hole(20).faces(">Z").workplane().pushPoints(screw_holes).hole(SCREW_HOLE)
 
 
 def make_arm() -> cq.Workplane:
     # Starts at x=0 so placing it is "rotate, then it points outward".
-    return cq.Workplane().center(ARM_LENGTH / 2, 0).box(ARM_LENGTH, 16, ARM_THICKNESS)
+    arm = cq.Workplane().center(ARM_LENGTH / 2, 0).box(ARM_LENGTH, 16, ARM_THICKNESS)
+    # The top face's workplane is centred on the arm, so hole x is measured from its middle.
+    arm_start = PLATE_SIZE / 2 - 20
+    holes = [(along - arm_start - ARM_LENGTH / 2, 0.0) for along in SCREW_ALONG]
+    return arm.faces(">Z").workplane().pushPoints(holes).hole(SCREW_HOLE)
 
 
 def make_motor() -> cq.Workplane:
@@ -99,12 +111,12 @@ def make_screw() -> cq.Workplane:
 
 
 def make_standoff() -> cq.Workplane:
-    return cq.Workplane().polygon(6, 5.5).extrude(20).faces(">Z").workplane().hole(3)
+    return cq.Workplane().polygon(6, 5.5).extrude(STANDOFF_HEIGHT).faces(">Z").workplane().hole(3)
 
 
 def make_board() -> cq.Workplane:
     board = cq.Workplane().box(36, 36, 1.6)
-    return board.faces(">Z").workplane().rect(30.5, 30.5, forConstruction=True).vertices().hole(3)
+    return board.faces(">Z").workplane().pushPoints(STANDOFF_AT).hole(3)
 
 
 def make_chip(x: float, y: float, z: float) -> cq.Workplane:
@@ -151,7 +163,7 @@ def frame_group() -> Group:
         )
     screw_number = 1
     for angle in CORNERS.values():
-        for along in (PLATE_SIZE / 2 - 14, PLATE_SIZE / 2 - 6):
+        for along in SCREW_ALONG:
             x, y = arm_tip(angle, along)
             loc = at(x, y, top + ARM_THICKNESS)
             children.append(Part(f"Screw_{screw_number}", screw, loc, "#888888"))
@@ -175,9 +187,7 @@ def electronics_group() -> Group:
     standoff, ic_small = Proto("Part37", make_standoff()), Proto("Chip", make_chip(3, 3, 1))
     children: list[Part | Group] = []
     # "Part37".."Part40": deliberately junk instance names too.
-    for i, (x, y) in enumerate(
-        [(15.25, 15.25), (-15.25, 15.25), (-15.25, -15.25), (15.25, -15.25)]
-    ):
+    for i, (x, y) in enumerate(STANDOFF_AT):
         children.append(Part(f"Part{37 + i}", standoff, at(x, y, 0), "#c0a000"))
     board = Group(
         "FlightController",
@@ -344,9 +354,42 @@ def count_unique(parts: list[Part]) -> int:
     return len({id(p.proto) for p in parts})
 
 
+# Two touching parts intersect in a face, not a volume, so anything over this is a real clash.
+MAX_OVERLAP = 0.01  # mm³
+
+
+def overlaps(parts: list[Part]) -> list[tuple[str, str, float]]:
+    """Every pair of placed solids that share volume: (name, name, mm³).
+
+    Bounding boxes rule out most of the 465 pairs before any boolean runs.
+    """
+    placed = [(p.name, p.proto.shape.val().moved(p.loc)) for p in parts]
+    boxes = [shape.BoundingBox() for _, shape in placed]
+    clashes: list[tuple[str, str, float]] = []
+    for i, (name_a, a) in enumerate(placed):
+        for j in range(i + 1, len(placed)):
+            name_b, b = placed[j]
+            if not _boxes_touch(boxes[i], boxes[j]):
+                continue
+            volume = a.intersect(b).Volume()
+            if volume > MAX_OVERLAP:
+                clashes.append((name_a, name_b, volume))
+    return clashes
+
+
+def _boxes_touch(a: cq.BoundBox, b: cq.BoundBox) -> bool:
+    return (
+        a.xmin <= b.xmax and b.xmin <= a.xmax
+        and a.ymin <= b.ymax and b.ymin <= a.ymax
+        and a.zmin <= b.zmax and b.zmin <= a.zmax
+    )  # fmt: skip
+
+
 def main() -> None:
     tree = drone_tree()
     parts = flatten(tree, cq.Location())
+    for name_a, name_b, volume in overlaps(parts):
+        raise SystemExit(f"{name_a} and {name_b} overlap by {volume:.2f} mm³")
 
     write_step(tree, HERE / "drone.step")
     check_instancing(HERE / "drone.step", count_unique(parts), len(parts))

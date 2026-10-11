@@ -93,9 +93,14 @@ children (majority vote), tie broken by name.
 ### 2. Classify each matched pair
 
 - **renamed**: node name differs.
-- **moved**: world transform differs. Compare positions with a 0.01 mm
+- **moved**: the part sits somewhere else. Compare positions with a 0.01 mm
   tolerance and rotations with 0.01°, *after* checking whether the parent moved
   — a part whose own `transform` is unchanged is not "moved", only its group is.
+  For an unchanged shape compare the world position of its `center`, not the
+  raw transform: a baked export (`baked` pair) has identity transforms with the
+  placement inside the geometry, and nothing moved. For a *modified* shape the
+  centre of mass itself shifts (`hole` pair), so compare the world transforms.
+  `fixtures/make_diff_pairs.py::verify` is the executable form of these rules.
 - **re-parented**: the parent *node* differs — i.e. the new parent is not the
   match of the old parent. Compare matched parent pairs, not path strings, or
   renaming one group would mark every part inside it as re-parented.
@@ -156,7 +161,12 @@ removed red (ghosted), moved blue, modified orange; the tree shows tags.
    part renamed, nothing else**). Each pair comes with its expected
    `diff.json`; check all ten against the tag definitions in "Classify" before
    step 2 starts. (~1 session, including the fixture-overlap cleanup noted
-   in #2.)
+   in #2.) **Done:** `fixtures/pairs/drone/` holds `v1.step`, one
+   `<change>.step` per pair and `<change>.expected.json` (paths, tags, deltas,
+   summary), all checked by `verify()`. The same script run on any STEP file
+   (`python fixtures/make_diff_pairs.py fixtures/real/x.step`) writes
+   no-change / move / delete / rename pairs with expected answers into
+   `fixtures/real/pairs/x/`.
 2. **Matching + classification** (`diff/match.py`, `diff/classify.py`) and
    `kyumi diff`, using only the `Model` API. All pairs from step 1 produce
    their expected output. **Not done until it has also run on the real v1/v2

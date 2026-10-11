@@ -1,0 +1,23 @@
+{
+  "old": "v1.step",
+  "new": "add.step",
+  "note": "Chip_Extra added to the FlightController (a copy of the Chip shape)",
+  "changes": [],
+  "added": [
+    [
+      "Drone",
+      "Electronics",
+      "FlightController",
+      "Chip_Extra"
+    ]
+  ],
+  "removed": [],
+  "summary": {
+    "added": 1,
+    "removed": 0,
+    "moved": 0,
+    "renamed": 0,
+    "modified": 0,
+    "re-parented": 0
+  }
+}

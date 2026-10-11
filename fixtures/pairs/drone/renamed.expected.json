@@ -1,0 +1,555 @@
+{
+  "old": "v1.step",
+  "new": "renamed.step",
+  "note": "every node is Part1..PartN, every shape Body1..BodyN",
+  "changes": [
+    {
+      "old": [
+        "Drone"
+      ],
+      "new": [
+        "Part1"
+      ],
+      "tags": [
+        "renamed"
+      ]
+    },
+    {
+      "old": [
+        "Drone",
+        "Frame"
+      ],
+      "new": [
+        "Part1",
+        "Part2"
+      ],
+      "tags": [
+        "renamed"
+      ]
+    },
+    {
+      "old": [
+        "Drone",
+        "Frame",
+        "CenterPlate"
+      ],
+      "new": [
+        "Part1",
+        "Part2",
+        "Part3"
+      ],
+      "tags": [
+        "renamed"
+      ]
+    },
+    {
+      "old": [
+        "Drone",
+        "Frame",
+        "Arm_FL"
+      ],
+      "new": [
+        "Part1",
+        "Part2",
+        "Part4"
+      ],
+      "tags": [
+        "renamed"
+      ]
+    },
+    {
+      "old": [
+        "Drone",
+        "Frame",
+        "Arm_FR"
+      ],
+      "new": [
+        "Part1",
+        "Part2",
+        "Part5"
+      ],
+      "tags": [
+        "renamed"
+      ]
+    },
+    {
+      "old": [
+        "Drone",
+        "Frame",
+        "Arm_BL"
+      ],
+      "new": [
+        "Part1",
+        "Part2",
+        "Part6"
+      ],
+      "tags": [
+        "renamed"
+      ]
+    },
+    {
+      "old": [
+        "Drone",
+        "Frame",
+        "Arm_BR"
+      ],
+      "new": [
+        "Part1",
+        "Part2",
+        "Part7"
+      ],
+      "tags": [
+        "renamed"
+      ]
+    },
+    {
+      "old": [
+        "Drone",
+        "Frame",
+        "Screw_1"
+      ],
+      "new": [
+        "Part1",
+        "Part2",
+        "Part8"
+      ],
+      "tags": [
+        "renamed"
+      ]
+    },
+    {
+      "old": [
+        "Drone",
+        "Frame",
+        "Screw_2"
+      ],
+      "new": [
+        "Part1",
+        "Part2",
+        "Part9"
+      ],
+      "tags": [
+        "renamed"
+      ]
+    },
+    {
+      "old": [
+        "Drone",
+        "Frame",
+        "Screw_3"
+      ],
+      "new": [
+        "Part1",
+        "Part2",
+        "Part10"
+      ],
+      "tags": [
+        "renamed"
+      ]
+    },
+    {
+      "old": [
+        "Drone",
+        "Frame",
+        "Screw_4"
+      ],
+      "new": [
+        "Part1",
+        "Part2",
+        "Part11"
+      ],
+      "tags": [
+        "renamed"
+      ]
+    },
+    {
+      "old": [
+        "Drone",
+        "Frame",
+        "Screw_5"
+      ],
+      "new": [
+        "Part1",
+        "Part2",
+        "Part12"
+      ],
+      "tags": [
+        "renamed"
+      ]
+    },
+    {
+      "old": [
+        "Drone",
+        "Frame",
+        "Screw_6"
+      ],
+      "new": [
+        "Part1",
+        "Part2",
+        "Part13"
+      ],
+      "tags": [
+        "renamed"
+      ]
+    },
+    {
+      "old": [
+        "Drone",
+        "Frame",
+        "Screw_7"
+      ],
+      "new": [
+        "Part1",
+        "Part2",
+        "Part14"
+      ],
+      "tags": [
+        "renamed"
+      ]
+    },
+    {
+      "old": [
+        "Drone",
+        "Frame",
+        "Screw_8"
+      ],
+      "new": [
+        "Part1",
+        "Part2",
+        "Part15"
+      ],
+      "tags": [
+        "renamed"
+      ]
+    },
+    {
+      "old": [
+        "Drone",
+        "Propulsion"
+      ],
+      "new": [
+        "Part1",
+        "Part16"
+      ],
+      "tags": [
+        "renamed"
+      ]
+    },
+    {
+      "old": [
+        "Drone",
+        "Propulsion",
+        "Motor_FL"
+      ],
+      "new": [
+        "Part1",
+        "Part16",
+        "Part17"
+      ],
+      "tags": [
+        "renamed"
+      ]
+    },
+    {
+      "old": [
+        "Drone",
+        "Propulsion",
+        "Prop_FL"
+      ],
+      "new": [
+        "Part1",
+        "Part16",
+        "Part18"
+      ],
+      "tags": [
+        "renamed"
+      ]
+    },
+    {
+      "old": [
+        "Drone",
+        "Propulsion",
+        "Motor_FR"
+      ],
+      "new": [
+        "Part1",
+        "Part16",
+        "Part19"
+      ],
+      "tags": [
+        "renamed"
+      ]
+    },
+    {
+      "old": [
+        "Drone",
+        "Propulsion",
+        "Prop_FR"
+      ],
+      "new": [
+        "Part1",
+        "Part16",
+        "Part20"
+      ],
+      "tags": [
+        "renamed"
+      ]
+    },
+    {
+      "old": [
+        "Drone",
+        "Propulsion",
+        "Motor_BL"
+      ],
+      "new": [
+        "Part1",
+        "Part16",
+        "Part21"
+      ],
+      "tags": [
+        "renamed"
+      ]
+    },
+    {
+      "old": [
+        "Drone",
+        "Propulsion",
+        "Prop_BL"
+      ],
+      "new": [
+        "Part1",
+        "Part16",
+        "Part22"
+      ],
+      "tags": [
+        "renamed"
+      ]
+    },
+    {
+      "old": [
+        "Drone",
+        "Propulsion",
+        "Motor_BR"
+      ],
+      "new": [
+        "Part1",
+        "Part16",
+        "Part23"
+      ],
+      "tags": [
+        "renamed"
+      ]
+    },
+    {
+      "old": [
+        "Drone",
+        "Propulsion",
+        "Prop_BR"
+      ],
+      "new": [
+        "Part1",
+        "Part16",
+        "Part24"
+      ],
+      "tags": [
+        "renamed"
+      ]
+    },
+    {
+      "old": [
+        "Drone",
+        "Electronics"
+      ],
+      "new": [
+        "Part1",
+        "Part25"
+      ],
+      "tags": [
+        "renamed"
+      ]
+    },
+    {
+      "old": [
+        "Drone",
+        "Electronics",
+        "Part37"
+      ],
+      "new": [
+        "Part1",
+        "Part25",
+        "Part26"
+      ],
+      "tags": [
+        "renamed"
+      ]
+    },
+    {
+      "old": [
+        "Drone",
+        "Electronics",
+        "Part38"
+      ],
+      "new": [
+        "Part1",
+        "Part25",
+        "Part27"
+      ],
+      "tags": [
+        "renamed"
+      ]
+    },
+    {
+      "old": [
+        "Drone",
+        "Electronics",
+        "Part39"
+      ],
+      "new": [
+        "Part1",
+        "Part25",
+        "Part28"
+      ],
+      "tags": [
+        "renamed"
+      ]
+    },
+    {
+      "old": [
+        "Drone",
+        "Electronics",
+        "Part40"
+      ],
+      "new": [
+        "Part1",
+        "Part25",
+        "Part29"
+      ],
+      "tags": [
+        "renamed"
+      ]
+    },
+    {
+      "old": [
+        "Drone",
+        "Electronics",
+        "FlightController"
+      ],
+      "new": [
+        "Part1",
+        "Part25",
+        "Part30"
+      ],
+      "tags": [
+        "renamed"
+      ]
+    },
+    {
+      "old": [
+        "Drone",
+        "Electronics",
+        "FlightController",
+        "Board"
+      ],
+      "new": [
+        "Part1",
+        "Part25",
+        "Part30",
+        "Part31"
+      ],
+      "tags": [
+        "renamed"
+      ]
+    },
+    {
+      "old": [
+        "Drone",
+        "Electronics",
+        "FlightController",
+        "Chip_MCU"
+      ],
+      "new": [
+        "Part1",
+        "Part25",
+        "Part30",
+        "Part32"
+      ],
+      "tags": [
+        "renamed"
+      ]
+    },
+    {
+      "old": [
+        "Drone",
+        "Electronics",
+        "FlightController",
+        "Chip_IMU"
+      ],
+      "new": [
+        "Part1",
+        "Part25",
+        "Part30",
+        "Part33"
+      ],
+      "tags": [
+        "renamed"
+      ]
+    },
+    {
+      "old": [
+        "Drone",
+        "Electronics",
+        "FlightController",
+        "Chip_Baro"
+      ],
+      "new": [
+        "Part1",
+        "Part25",
+        "Part30",
+        "Part34"
+      ],
+      "tags": [
+        "renamed"
+      ]
+    },
+    {
+      "old": [
+        "Drone",
+        "Electronics",
+        "FlightController",
+        "Connector"
+      ],
+      "new": [
+        "Part1",
+        "Part25",
+        "Part30",
+        "Part35"
+      ],
+      "tags": [
+        "renamed"
+      ]
+    },
+    {
+      "old": [
+        "Drone",
+        "Battery"
+      ],
+      "new": [
+        "Part1",
+        "Part36"
+      ],
+      "tags": [
+        "renamed"
+      ]
+    }
+  ],
+  "added": [],
+  "removed": [],
+  "summary": {
+    "added": 0,
+    "removed": 0,
+    "moved": 0,
+    "renamed": 36,
+    "modified": 0,
+    "re-parented": 0
+  }
+}

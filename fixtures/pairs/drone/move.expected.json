@@ -1,0 +1,35 @@
+{
+  "old": "v1.step",
+  "new": "move.step",
+  "note": "Motor_FR moved 5 mm up",
+  "changes": [
+    {
+      "old": [
+        "Drone",
+        "Propulsion",
+        "Motor_FR"
+      ],
+      "new": [
+        "Drone",
+        "Propulsion",
+        "Motor_FR"
+      ],
+      "tags": [
+        "moved"
+      ],
+      "delta": {
+        "distance": 5.0
+      }
+    }
+  ],
+  "added": [],
+  "removed": [],
+  "summary": {
+    "added": 0,
+    "removed": 0,
+    "moved": 1,
+    "renamed": 0,
+    "modified": 0,
+    "re-parented": 0
+  }
+}
