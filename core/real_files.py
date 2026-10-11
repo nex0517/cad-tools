@@ -5,8 +5,10 @@ Those files are not committed (their licences do not allow it), so this report
 is how we track whether core copes with real-world exports. Later it will also
 run `kyumi diff` on the v1/v2 pairs in fixtures/real/pairs/.
 
-"junk names" counts leaves named "", digits only, or Part/Body/Solid + number:
-these are the files where categorize cannot lean on names.
+"junk names" counts leaves whose name carries no meaning: "", digits only,
+Part/Body/Solid/Component + number, Onshape's "Part Studio N", each optionally
+with a copy suffix (-2, :2, <2>). These are the files where categorize cannot
+lean on names.
 
     python core/real_files.py
 """
@@ -29,7 +31,15 @@ REPORT = ROOT / "docs" / "real-files.md"
 COLUMNS = (
     "file | import | units | nodes | shapes | depth | junk names | coloured | time | .kyumi size"
 )
-JUNK_NAME = re.compile(r"^(|\d+|(part|body|solid)[ _-]?\d+)$", re.IGNORECASE)
+JUNK_NAME = re.compile(
+    r"^(|\d+|(part|body|solid|component)[ _-]?\d+|part studio \d+)"  # the base name
+    r"( ?[-:]\d+| ?<\d+>)?$",  # optional copy suffix: -2, :2, <2>
+    re.IGNORECASE,
+)
+
+
+def is_junk_name(name: str) -> bool:
+    return JUNK_NAME.match(name) is not None
 
 
 def percent(flags: list[bool]) -> str:
@@ -54,7 +64,7 @@ def report_line(step: Path, out_dir: Path) -> str:
         str(len(model.nodes)),
         f"{len(model.shapes)} ({groups} distinct geometries)",
         str(max((len(model.path_of(n.id)) for n in model.nodes), default=0)),
-        percent([bool(JUNK_NAME.match(n.name)) for n in leaves]),
+        percent([is_junk_name(n.name) for n in leaves]),
         percent([model.color_of(n) is not None for n in leaves]),
         f"{sum(timings.values()):.1f} s",
         f"{out.stat().st_size / 1e6:.1f} MB",

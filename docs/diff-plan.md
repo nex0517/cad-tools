@@ -60,20 +60,32 @@ dictionaries: by node name, by fingerprint, and by a coarse spatial grid cell
 bounding-box diagonal, including the 26 neighbouring cells). A new leaf's
 candidates are the union of the three lookups. Typical candidate count: 1–10.
 
+**Rule: among parts with the same fingerprint, position beats name.** Two
+identical props that trade places are the *same* props with swapped labels
+(two renames), not two 155 mm moves. The weights must encode this: with the
+earlier draft (node name 0.25 > distance 0.15) the swap pair scored as two
+moves, and no assignment algorithm can fix that, because the scores are wrong,
+not the assignment.
+
 **Score** each candidate pair, 0–1 each, summed with weights:
 
 | signal | weight | note |
 |---|---|---|
 | same fingerprint | 0.40 | strong, but four motors share one |
-| same node name | 0.25 | names can be junk (`Part37`) or blank |
+| world `center` distance | 0.30 | `exp(-d / tolerance)`; decides between copies |
+| same node name | 0.10 | names can be junk (`Part37`) or blank; must stay below distance |
 | same shape name | 0.10 | separate from the node name |
-| world `center` distance | 0.15 | `exp(-d / tolerance)`; breaks ties between copies |
 | same parent path | 0.10 | context |
+
+Check on the swap pair: old `Prop_FL` vs the new prop *at its old position*
+(now named `Prop_FR`) scores 0.40 + 0.30 + 0.10 + 0.10 = 0.90; vs the new
+`Prop_FL` 155 mm away it scores 0.40 + 0 + 0.10 + 0.10 + 0.10 = 0.70. Position
+wins; the pair is then tagged **renamed**.
 
 **Assign** greedily: sort all candidate pairs by score, take the best, remove
 both nodes, repeat. Reject pairs under 0.3. Greedy is simple and visibly
-correct in the viewer; switch to the Hungarian algorithm only if the swap
-tests below fail.
+correct in the viewer; the Hungarian algorithm is only worth adding if a pair
+is mis-assigned *despite* correct scores.
 
 Groups: a group matches the old group that contains most of its matched
 children (majority vote), tie broken by name.
@@ -137,14 +149,19 @@ removed red (ghosted), moved blue, modified orange; the tree shows tags.
 1. **Test data generator** (`fixtures/make_diff_pairs.py`): derive v2 drones
    from the drone fixture with one known change each: rename `Motor_FL`; move
    one motor 5 mm; delete `Screw_3`; add a chip; resize the battery; drill a
-   hole in `CenterPlate`; swap `Prop_FL` and `Prop_FR` (identical copies);
-   rotate the whole `Frame` group; the same v1 exported as `drone_messy`
-   (copies instead of instances). Also a `drone_renamed` v2 where every node
-   is `Part1..PartN`. Each pair comes with its expected `diff.json`.
-   (~1 session, including the fixture-overlap cleanup noted in #2.)
+   hole in `CenterPlate`; swap `Prop_FL` and `Prop_FR` (identical copies,
+   expected: **2 renamed**); rotate the whole `Frame` group; the same v1
+   exported as `drone_messy` (copies instead of instances). Also a
+   `drone_renamed` v2 where every node is `Part1..PartN` (expected: **every
+   part renamed, nothing else**). Each pair comes with its expected
+   `diff.json`; check all ten against the tag definitions in "Classify" before
+   step 2 starts. (~1 session, including the fixture-overlap cleanup noted
+   in #2.)
 2. **Matching + classification** (`diff/match.py`, `diff/classify.py`) and
-   `kyumi diff`. All pairs from step 1 produce their expected output.
-   (~1 session.)
+   `kyumi diff`, using only the `Model` API. All pairs from step 1 produce
+   their expected output. **Not done until it has also run on the real v1/v2
+   pairs in `fixtures/real/pairs/`** (via `core/real_files.py`, results in
+   `docs/real-files.md`). (~1 session.)
 3. **Detail diff** for one pair, including the fuzzy-boolean fallback.
    (~0.5 session.)
 4. **Viewer diff mode.** (~0.5 session.)
@@ -155,11 +172,14 @@ Rough total: 3 sessions of work, plus review turnarounds.
 
 - Every generated pair asserts the exact `diff.json` (ids differ between
   files, so assert on paths, not ids).
-- The `drone_renamed` pair must still match every part correctly using
-  fingerprint + position alone; this is the "how much do we depend on names"
-  test and should be reported as a number, not just pass/fail.
-- Swapping two identical props must report *no change* (or two moves of 0 mm,
-  which we collapse to none).
+- The `drone_renamed` pair must match every part using fingerprint + position
+  alone and report **every part renamed, nothing else** (no moves, no
+  added/removed); the match rate is the "how much do we depend on names"
+  number and is reported, not just pass/fail.
+- Swapping two identical props must report **2 renamed** (position beats
+  name), not two moves.
+- The real pairs in `fixtures/real/pairs/` must run to completion and their
+  summaries be eyeballed for sanity; they have no expected `diff.json`.
 - Rotating the `Frame` group must report **one** move, not thirteen.
 - Detail diff: the drilled-hole pair must produce an empty `added` and a
   `removed` solid whose volume equals the hole's (π r² h within 1 %).
@@ -193,6 +213,9 @@ Rough total: 3 sessions of work, plus review turnarounds.
   in scope? The matcher could do it; the output would need a different UI.
 
 ## What I need from core
+
+Everything through `load()` and the `Model` API — diff never opens the zip
+itself, so it can later run on kyumi's own loader.
 
 All available today in `core`:
 
