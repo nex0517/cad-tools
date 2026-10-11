@@ -149,15 +149,18 @@ added and a removed node share a fingerprint, report it as **moved far**
   "old": "v1.step", "new": "move.step",
   "keys": "names from the root down; the k-th same-named sibling (k >= 1) is 'Name#k'",
   "changes": [{"old": ["Drone", "Propulsion", "Motor_FR"], "new": ["Drone", "Propulsion", "Motor_FR"],
-               "tags": ["moved"], "delta": {"distance": 5.0}}],
+               "tags": ["moved"], "delta": {"distance": 5.0},
+               "old_id": "12", "new_id": "12", "score": 0.9}],
   "added":   [],
   "removed": [["Drone", "Frame", "Screw_3"]],
   "summary": {"added": 0, "removed": 1, "moved": 1, "renamed": 0, "modified": 0, "re-parented": 0}
 }
 ```
 
-Nodes are named by key, not id (ids are not stable across files), and the
-file has the same shape as the generated `*.expected.json`, so tests compare
+Nodes are named by key, not id (ids are not stable across files); `old_id`,
+`new_id` and the match `score` are there for tools that want to follow a change
+back into the two packages. Otherwise the file has the same shape as the
+generated `*.expected.json`, so tests compare
 the two directly. `kyumi diff old.kyumi new.kyumi [-o diff.json]` prints the
 match rate (parts of the old model that found a partner), the summary and one
 line per change (`moved  Drone › Propulsion › Motor_FR  by 5.0 mm`). If the two
@@ -181,7 +184,9 @@ removed red (ghosted), moved blue, modified orange; the tree shows tags.
    in #2.) **Done:** `fixtures/pairs/drone/` holds `v1.step`, one
    `<change>.step` per pair and `<change>.expected.json` (keys, tags, deltas,
    summary), all checked by `verify()`; plus `arms_v1.step` / `arms.step`, four
-   identical `ArmUnit` groups with one moved. The same script run on any STEP file
+   identical `ArmUnit` groups with one moved, and `reparent.step`, `Screw_1`
+   moved from `Frame` into `Electronics` with its world position kept (its
+   local transform changes; expected: `re-parented` only). The same script run on any STEP file
    (`python fixtures/make_diff_pairs.py fixtures/real/x.step`) writes
    no-change / move / delete / rename pairs with expected answers into
    `fixtures/real/pairs/x/`.
@@ -202,8 +207,10 @@ Rough total: 3 sessions of work, plus review turnarounds.
 
 ## Test strategy
 
-- Every generated pair asserts the exact `diff.json`. Ids differ between
-  files and paths are not unique (CPT17: eight `LegUnit > Clamp (3.3535)`),
+- Every generated pair asserts the exact `diff.json` (everything but ids and
+  scores), and the match rate: v1 parts paired with the partner the expected
+  answer names ÷ v1 parts, printed as `renamed: 31/31 correct (100.0%)`. Ids
+  differ between files and paths are not unique (CPT17: eight `LegUnit > Clamp (3.3535)`),
   so nodes are named by **key**: the names from the root down, where the k-th
   sibling with the same name (k ≥ 1) is written `Name#k` — `Drone / ArmUnit#2`.
   Assumptions: the export keeps sibling order (every tool seen so far does),

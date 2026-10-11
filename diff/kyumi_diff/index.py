@@ -12,8 +12,30 @@ from kyumi import Model, Node
 Key = list[str]
 
 
+KEY_FORMAT = "names from the root down; the k-th same-named sibling (k >= 1) is 'Name#k'"
+
+
 def with_index(name: str, earlier_same_name: int) -> str:
     return f"{name}#{earlier_same_name}" if earlier_same_name else name
+
+
+def key_of(model: Model, node_id: str) -> Key:
+    """Like Model.path_of, but same-named siblings are told apart: "Name", "Name#1", ...
+
+    Ids are stable within one file only and paths are not unique (CPT17 has eight
+    `LegUnit > Clamp` siblings), so this is how a node is named in diff.json and
+    in the generated expected answers.
+    """
+    key: Key = []
+    current: str | None = node_id
+    while current is not None:
+        node = model.node(current)
+        siblings = model.children(node.parent)
+        position = [s.id for s in siblings].index(node.id)
+        earlier = sum(1 for s in siblings[:position] if s.name == node.name)
+        key.append(with_index(node.name, earlier))
+        current = node.parent
+    return key[::-1]
 
 
 class Index:

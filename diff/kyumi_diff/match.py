@@ -30,17 +30,17 @@ MAX_FINGERPRINT_BUCKET = 64
 Cell = tuple[int, int, int]
 
 
-def match(old: Index, new: Index) -> dict[str, str]:
-    """old node id -> new node id, for leaves and groups alike."""
-    pairs = match_leaves(old, new)
-    pairs.update(match_groups(old, new, pairs))
-    return pairs
+def match(old: Index, new: Index) -> tuple[dict[str, str], dict[str, float]]:
+    """old node id -> new node id and its score, for leaves and groups alike."""
+    pairs, scores = match_leaves(old, new)
+    group_pairs, group_scores = match_groups(old, new, pairs)
+    return {**pairs, **group_pairs}, {**scores, **group_scores}
 
 
 # ---------- leaves ----------
 
 
-def match_leaves(old: Index, new: Index) -> dict[str, str]:
+def match_leaves(old: Index, new: Index) -> tuple[dict[str, str], dict[str, float]]:
     cell_size = grid_cell_size(old)
     by_name: dict[str, list[Node]] = {}
     by_fingerprint: dict[str, list[Node]] = {}
@@ -70,13 +70,14 @@ def match_leaves(old: Index, new: Index) -> dict[str, str]:
     # Greedy: best score first; ties broken by the order the nodes appear in the file.
     scored.sort(key=lambda t: (-t[0], old.key[t[1]], new.key[t[2]]))
     pairs: dict[str, str] = {}
+    scores: dict[str, float] = {}
     taken_new: set[str] = set()
-    for _, o_id, n_id in scored:
+    for s, o_id, n_id in scored:
         if o_id in pairs or n_id in taken_new:
             continue
-        pairs[o_id] = n_id
+        pairs[o_id], scores[o_id] = n_id, s
         taken_new.add(n_id)
-    return pairs
+    return pairs, scores
 
 
 def score(old: Index, o: Node, new: Index, n: Node, tolerance: float) -> float:
@@ -114,12 +115,18 @@ def neighbourhood(cell: Cell) -> list[Cell]:
 # ---------- groups ----------
 
 
-def match_groups(old: Index, new: Index, leaf_pairs: dict[str, str]) -> dict[str, str]:
+def match_groups(
+    old: Index, new: Index, leaf_pairs: dict[str, str]
+) -> tuple[dict[str, str], dict[str, float]]:
     """A new group matches the old group holding most of its matched children; a
-    tie (eight identical LegUnits) goes to the old group whose children sit closest."""
+    tie (eight identical LegUnits) goes to the old group whose children sit closest.
+    The score is the share of the group's matched children that came from there.
+    A group with no matched children (an empty group) falls back to the old group
+    of the same name under its matched parent."""
     old_of_new = {n: o for o, n in leaf_pairs.items()}
     taken_old: set[str] = set()
     pairs: dict[str, str] = {}
+    scores: dict[str, float] = {}
     for group in sorted(new.groups, key=lambda g: -new.depth[g.id]):  # deepest first
         votes: Counter[str] = Counter()
         distance: dict[str, float] = {}
@@ -137,7 +144,23 @@ def match_groups(old: Index, new: Index, leaf_pairs: dict[str, str]) -> dict[str
         if not votes:
             continue
         best = min(votes, key=lambda o: (-votes[o], distance.get(o, 0.0), old.key[o]))
-        pairs[best] = group.id
+        pairs[best], scores[best] = group.id, votes[best] / sum(votes.values())
         taken_old.add(best)
         old_of_new[group.id] = best
-    return pairs
+    for group in sorted(new.groups, key=lambda g: new.depth[g.id]):  # parents first
+        if group.id in old_of_new.values():
+            continue
+        o_parent = None if group.parent is None else old_of_new.get(group.parent)
+        if group.parent is not None and o_parent is None:
+            continue
+        same_name = [
+            o
+            for o in old.children.get(o_parent, [])
+            if o.shape is None and o.name == group.name and o.id not in taken_old
+        ]
+        if len(same_name) == 1:
+            best = same_name[0].id
+            pairs[best], scores[best] = group.id, WEIGHTS["node_name"] + WEIGHTS["parent"]
+            taken_old.add(best)
+            old_of_new[group.id] = best
+    return pairs, scores

@@ -58,7 +58,7 @@ Four identical motors are **1 shape and 4 nodes**. Everything expensive
 |-------------|--------|---------|
 | `format`    | string | always `"kyumi"` |
 | `version`   | int    | format version, currently `1` (see *Versioning*) |
-| `generator` | object | optional: which program wrote the file; for debugging only |
+| `generator` | object | optional: `name` and `version` of the program that wrote the file. **Bump `version` whenever measurement or fingerprint code changes**: `kyumi diff` warns when two packages carry different versions (or either has none), because their fingerprints may then differ for identical geometry and "modified" could be false |
 | `source`    | object | `file`: original file name. `units`: length unit the STEP file *declared* (`"mm"`, `"inch"`, `"m"`, ...). Informational only: every length in the manifest is already in mm |
 | `shapes`    | object | shape id → shape (below) |
 | `nodes`     | list   | every node of the tree (below) |

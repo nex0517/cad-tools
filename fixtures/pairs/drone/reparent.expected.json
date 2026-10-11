@@ -1,0 +1,33 @@
+{
+  "old": "v1.step",
+  "new": "reparent.step",
+  "note": "Screw_1 moved from Frame into Electronics, world position kept (re-parented only)",
+  "keys": "names from the root down; the k-th same-named sibling (k >= 1) is 'Name#k'",
+  "changes": [
+    {
+      "old": [
+        "Drone",
+        "Frame",
+        "Screw_1"
+      ],
+      "new": [
+        "Drone",
+        "Electronics",
+        "Screw_1"
+      ],
+      "tags": [
+        "re-parented"
+      ]
+    }
+  ],
+  "added": [],
+  "removed": [],
+  "summary": {
+    "added": 0,
+    "removed": 0,
+    "moved": 0,
+    "renamed": 0,
+    "modified": 0,
+    "re-parented": 1
+  }
+}

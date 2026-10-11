@@ -17,6 +17,8 @@ from kyumi.mesh import mesh_glb
 from kyumi.model import FORMAT, VERSION, Model, Node, Shape
 from kyumi.reader import RawModel, RawShape, read_step
 
+# Bump the version whenever measure.py or the fingerprint changes (docs/format.md):
+# `kyumi diff` trusts fingerprints only between packages of the same version.
 GENERATOR = {"name": "kyumi-core", "version": "0.1.0"}
 
 

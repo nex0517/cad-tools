@@ -5,7 +5,8 @@ from __future__ import annotations
 import json
 from dataclasses import asdict
 
-from kyumi_diff.classify import KEY_FORMAT, Change, Diff
+from kyumi_diff.classify import Change, Diff
+from kyumi_diff.index import KEY_FORMAT
 
 
 def to_json(result: Diff) -> str:
@@ -23,21 +24,37 @@ def to_json(result: Diff) -> str:
 
 def as_dict(change: Change) -> dict:
     data = asdict(change)
+    data["score"] = round(change.score, 3)
     if not change.delta:
         del data["delta"]
     return data
 
 
-def render_text(result: Diff) -> str:
-    lines = [
-        f"matched {result.matched_leaves}/{result.old_leaves} parts "
-        f"({100 * result.match_rate:.0f} %)",
-        "  ".join(f"{tag} {count}" for tag, count in result.summary.items()),
+def agrees(result: Diff, expected: dict) -> bool:
+    """Does the diff say what an expected.json says? Ids and scores are not compared:
+    ids differ between files and scores are the matcher's business."""
+    return comparable(json.loads(to_json(result))) == comparable(expected)
+
+
+def comparable(answer: dict) -> dict:
+    changes = [
+        {k: v for k, v in c.items() if k not in ("old_id", "new_id", "score")}
+        for c in answer["changes"]
     ]
+    return {
+        "changes": sorted(changes, key=lambda c: (c["old"], c["new"])),
+        "added": sorted(answer["added"]),
+        "removed": sorted(answer["removed"]),
+        "summary": answer["summary"],
+    }
+
+
+def render_text(result: Diff) -> str:
+    lines = ["  ".join(f"{tag} {count}" for tag, count in result.summary.items())]
     for change in result.changes:
-        lines.append(f"{'+'.join(change.tags):<12} {describe_change(change)}")
-    lines += [f"{'added':<12} {' › '.join(key)}" for key in result.added]
-    lines += [f"{'removed':<12} {' › '.join(key)}" for key in result.removed]
+        lines.append(f"{'+'.join(change.tags)}  {describe_change(change)}")
+    lines += [f"added  {' › '.join(key)}" for key in result.added]
+    lines += [f"removed  {' › '.join(key)}" for key in result.removed]
     return "\n".join(lines)
 
 

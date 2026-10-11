@@ -56,6 +56,8 @@ def main(argv: list[str] | None = None) -> None:
 def run_diff(old: Path, new: Path, out: Path | None) -> None:
     if kyumi_diff is None:
         raise ValueError("kyumi diff needs the diff package: pip install -e diff")
+    if out is not None and out.resolve() in (old.resolve(), new.resolve()):
+        raise ValueError(f"-o {out} would overwrite an input package")
     result = kyumi_diff.diff(load(old), load(new))
     print(kyumi_diff.render_text(result))
     if out:

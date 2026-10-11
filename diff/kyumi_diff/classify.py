@@ -13,7 +13,6 @@ from kyumi_diff.index import Index, Key
 from kyumi_diff.match import match
 
 TAGS = ("added", "removed", "moved", "renamed", "modified", "re-parented")
-KEY_FORMAT = "names from the root down; the k-th same-named sibling (k >= 1) is 'Name#k'"
 POSITION_TOLERANCE = 0.01  # mm
 ANGLE_TOLERANCE = 0.01  # degrees
 MEASUREMENT_TOLERANCE = 0.001  # relative: volume, area or inertia must differ by 0.1 %
@@ -25,6 +24,9 @@ class Change:
     new: Key
     tags: list[str]
     delta: dict[str, float] = field(default_factory=dict)
+    old_id: str = ""
+    new_id: str = ""
+    score: float = 0.0
 
 
 @dataclass
@@ -34,8 +36,8 @@ class Diff:
     changes: list[Change]
     added: list[Key]
     removed: list[Key]
-    matched_leaves: int
-    old_leaves: int
+    matches: dict[str, str]  # every old node id -> new node id, changed or not
+    scores: dict[str, float]  # old node id -> match score
 
     @property
     def summary(self) -> dict[str, int]:
@@ -46,15 +48,11 @@ class Diff:
                 counts[tag] += 1
         return counts
 
-    @property
-    def match_rate(self) -> float:
-        return self.matched_leaves / self.old_leaves if self.old_leaves else 1.0
-
 
 def diff(old: Model, new: Model) -> Diff:
     warn_if_generators_differ(old, new)
     o_index, n_index = Index(old), Index(new)
-    pairs = match(o_index, n_index)
+    pairs, scores = match(o_index, n_index)
     changes: list[Change] = []
     moved: set[str] = set()
     for o in o_index.ordered():  # parents first, so "did an ancestor move" is known
@@ -66,7 +64,9 @@ def diff(old: Model, new: Model) -> Diff:
         if "moved" in tags:
             moved.add(o.id)
         if tags:
-            changes.append(Change(o_index.key[o.id], n_index.key[n.id], tags, delta))
+            changes.append(
+                Change(o_index.key[o.id], n_index.key[n.id], tags, delta, o.id, n.id, scores[o.id])
+            )
     matched_new = set(pairs.values())
     return Diff(
         old=old.source_file,
@@ -74,15 +74,19 @@ def diff(old: Model, new: Model) -> Diff:
         changes=changes,
         added=sorted(n_index.key[n.id] for n in new.nodes if n.id not in matched_new),
         removed=sorted(o_index.key[o.id] for o in old.nodes if o.id not in pairs),
-        matched_leaves=sum(1 for o in o_index.leaves if o.id in pairs),
-        old_leaves=len(o_index.leaves),
+        matches=pairs,
+        scores=scores,
     )
 
 
 def warn_if_generators_differ(old: Model, new: Model) -> None:
-    if old.generator != new.generator:
+    """The generator version is bumped whenever measurement or fingerprint code
+    changes (docs/format.md), so two packages with different (or no) versions may
+    disagree on a fingerprint for the same geometry."""
+    versions = [(g or {}).get("version") for g in (old.generator, new.generator)]
+    if versions[0] != versions[1] or None in versions:
         print(
-            f"warning: the packages were written by different generators "
+            f"warning: the packages were written by different generator versions "
             f"({describe(old.generator)} vs {describe(new.generator)}); fingerprints may "
             f"not be comparable, so 'modified' results could be false",
             file=sys.stderr,

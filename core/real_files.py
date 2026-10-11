@@ -2,8 +2,10 @@
 docs/real-files.md with what happened to each.
 
 Those files are not committed (their licences do not allow it), so this report
-is how we track whether core copes with real-world exports. Later it will also
-run `kyumi diff` on the v1/v2 pairs in fixtures/real/pairs/.
+is how we track whether core copes with real-world exports. The v1/v2 pairs in
+fixtures/real/pairs/<file>/ (from `fixtures/make_diff_pairs.py <file>`) are not
+imported as single files; each is diffed (imported without breps) and the
+result compared with its expected.json.
 
 "junk names" counts leaves whose name carries no meaning: "", digits only,
 Part/Body/Solid/Component + number, Onshape's "Part Studio N", each optionally
@@ -15,16 +17,20 @@ lean on names.
 
 from __future__ import annotations
 
+import json
 import re
 import sys
 import tempfile
+import time
 from pathlib import Path
 
 from kyumi import load
 from kyumi.package import import_step
+from kyumi_diff import agrees, diff
 
 ROOT = Path(__file__).resolve().parents[1]
 REAL = ROOT / "fixtures" / "real"
+PAIRS = REAL / "pairs"
 REPORT = ROOT / "docs" / "real-files.md"
 
 
@@ -72,8 +78,40 @@ def report_line(step: Path, out_dir: Path) -> str:
     return "| " + " | ".join(cells) + " |"
 
 
+PAIR_COLUMNS = "pair | diff | time | summary"
+
+
+def pair_lines(pair_dir: Path, out_dir: Path) -> list[str]:
+    """One row per expected.json in a pair directory: does `kyumi diff` agree with it?"""
+    rows = []
+    for expected_file in sorted(pair_dir.glob("*.expected.json")):
+        expected = json.loads(expected_file.read_text(encoding="utf-8"))
+        name = f"{pair_dir.name}/{expected_file.name.removesuffix('.expected.json')}"
+        try:
+            start = time.perf_counter()
+            models = []
+            for step_name in (expected["old"], expected["new"]):
+                out = out_dir / f"{pair_dir.name}-{step_name}.kyumi"
+                if not out.exists():
+                    import_step(pair_dir / step_name, out, breps=False)
+                models.append(load(out))
+            result = diff(*models)
+            elapsed = time.perf_counter() - start
+        except Exception as error:  # noqa: BLE001 (any failure is a result worth recording)
+            rows.append(f"| {name} | failed: {type(error).__name__}: {error} | | |")
+            continue
+        verdict = "ok" if agrees(result, expected) else "MISMATCH"
+        summary = ", ".join(f"{k} {v}" for k, v in result.summary.items() if v)
+        rows.append(f"| {name} | {verdict} | {elapsed:.1f} s | {summary or 'no change'} |")
+    return rows
+
+
 def main() -> None:
-    steps = sorted(p for p in REAL.rglob("*") if p.suffix.lower() in (".step", ".stp"))
+    steps = sorted(
+        p
+        for p in REAL.rglob("*")
+        if p.suffix.lower() in (".step", ".stp") and PAIRS not in p.parents
+    )
     lines = [
         "# Real files",
         "",
@@ -89,8 +127,15 @@ def main() -> None:
             for step in steps:
                 print(step.relative_to(REAL), file=sys.stderr)
                 lines.append(report_line(step, Path(tmp)))
+    pair_dirs = sorted(p for p in PAIRS.glob("*") if p.is_dir()) if PAIRS.is_dir() else []
+    if pair_dirs:
+        lines += ["", "## Pairs", "", f"| {PAIR_COLUMNS} |", "|---" * 4 + "|"]
+        with tempfile.TemporaryDirectory() as tmp:
+            for pair_dir in pair_dirs:
+                print(pair_dir.relative_to(REAL), file=sys.stderr)
+                lines += pair_lines(pair_dir, Path(tmp))
     REPORT.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    print(f"wrote {REPORT.relative_to(ROOT)} ({len(steps)} files)")
+    print(f"wrote {REPORT.relative_to(ROOT)} ({len(steps)} files, {len(pair_dirs)} pair sets)")
 
 
 if __name__ == "__main__":
