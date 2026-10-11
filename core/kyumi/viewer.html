@@ -119,12 +119,11 @@ const ghosts = new Map();                     // "old:<id>" -> THREE.Mesh
 const moveLines = [];
 if (diff) {
   const oldGeometries = new Map();            // old mesh URL -> BufferGeometry
-  await Promise.all(diff.ghosts.filter(g => g.mesh).map(async g => {
-    if (oldGeometries.has(g.mesh)) return;
-    const gltf = await loader.loadAsync(g.mesh);
+  await Promise.all([...new Set(diff.ghosts.map(g => g.mesh).filter(Boolean))].map(async url => {
+    const gltf = await loader.loadAsync(url);   // once per shape, however many copies were removed
     const geo = gltf.scene.getObjectByProperty("isMesh", true).geometry;
     geo.computeVertexNormals();
-    oldGeometries.set(g.mesh, geo);
+    oldGeometries.set(url, geo);
   }));
   for (const g of diff.ghosts) {
     if (!oldGeometries.has(g.mesh)) continue;

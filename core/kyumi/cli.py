@@ -45,12 +45,13 @@ def main(argv: list[str] | None = None) -> None:
     dif.add_argument("old", type=Path)
     dif.add_argument("new", type=Path)
     dif.add_argument("-o", "--out", type=Path, help="also write diff.json here")
-    dif.add_argument(
+    detail_mode = dif.add_mutually_exclusive_group()
+    detail_mode.add_argument(
         "--detail",
         metavar="KEY",
         help="also compute the material added/removed in one part, e.g. Drone/Frame/CenterPlate",
     )
-    dif.add_argument(
+    detail_mode.add_argument(
         "--detail-all",
         action="store_true",
         help="compute the detail of every modified part ahead, for kyumi view --detail",
