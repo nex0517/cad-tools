@@ -1,0 +1,23 @@
+{
+  "old": "v1.step",
+  "new": "delete.step",
+  "note": "Screw_3 deleted",
+  "keys": "names from the root down; the k-th same-named sibling (k >= 1) is 'Name#k'",
+  "changes": [],
+  "added": [],
+  "removed": [
+    [
+      "Drone",
+      "Frame",
+      "Screw_3"
+    ]
+  ],
+  "summary": {
+    "added": 0,
+    "removed": 1,
+    "moved": 0,
+    "renamed": 0,
+    "modified": 0,
+    "re-parented": 0
+  }
+}

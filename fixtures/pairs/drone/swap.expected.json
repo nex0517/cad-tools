@@ -1,0 +1,48 @@
+{
+  "old": "v1.step",
+  "new": "swap.step",
+  "note": "Prop_FL and Prop_FR trade names; positions unchanged (2 renamed)",
+  "keys": "names from the root down; the k-th same-named sibling (k >= 1) is 'Name#k'",
+  "changes": [
+    {
+      "old": [
+        "Drone",
+        "Propulsion",
+        "Prop_FL"
+      ],
+      "new": [
+        "Drone",
+        "Propulsion",
+        "Prop_FR"
+      ],
+      "tags": [
+        "renamed"
+      ]
+    },
+    {
+      "old": [
+        "Drone",
+        "Propulsion",
+        "Prop_FR"
+      ],
+      "new": [
+        "Drone",
+        "Propulsion",
+        "Prop_FL"
+      ],
+      "tags": [
+        "renamed"
+      ]
+    }
+  ],
+  "added": [],
+  "removed": [],
+  "summary": {
+    "added": 0,
+    "removed": 0,
+    "moved": 0,
+    "renamed": 2,
+    "modified": 0,
+    "re-parented": 0
+  }
+}

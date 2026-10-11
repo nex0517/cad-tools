@@ -1,0 +1,34 @@
+{
+  "old": "v1.step",
+  "new": "resize.step",
+  "note": "Battery 10 mm longer",
+  "keys": "names from the root down; the k-th same-named sibling (k >= 1) is 'Name#k'",
+  "changes": [
+    {
+      "old": [
+        "Drone",
+        "Battery"
+      ],
+      "new": [
+        "Drone",
+        "Battery"
+      ],
+      "tags": [
+        "modified"
+      ],
+      "delta": {
+        "volume": 10422.743
+      }
+    }
+  ],
+  "added": [],
+  "removed": [],
+  "summary": {
+    "added": 0,
+    "removed": 0,
+    "moved": 0,
+    "renamed": 0,
+    "modified": 1,
+    "re-parented": 0
+  }
+}

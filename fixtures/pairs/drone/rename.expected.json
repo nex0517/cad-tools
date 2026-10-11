@@ -1,0 +1,33 @@
+{
+  "old": "v1.step",
+  "new": "rename.step",
+  "note": "Motor_FL renamed to Motor_FrontLeft",
+  "keys": "names from the root down; the k-th same-named sibling (k >= 1) is 'Name#k'",
+  "changes": [
+    {
+      "old": [
+        "Drone",
+        "Propulsion",
+        "Motor_FL"
+      ],
+      "new": [
+        "Drone",
+        "Propulsion",
+        "Motor_FrontLeft"
+      ],
+      "tags": [
+        "renamed"
+      ]
+    }
+  ],
+  "added": [],
+  "removed": [],
+  "summary": {
+    "added": 0,
+    "removed": 0,
+    "moved": 0,
+    "renamed": 1,
+    "modified": 0,
+    "re-parented": 0
+  }
+}

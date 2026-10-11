@@ -41,6 +41,13 @@ ARM_LENGTH = 100.0
 PLATE_SIZE = 80.0
 PLATE_THICKNESS = 3.0
 ARM_THICKNESS = 4.0
+# Screws sit this far out along each arm (measured from the drone's centre) and
+# pass through clearance holes in both the arm and the plate.
+SCREW_ALONG = (PLATE_SIZE / 2 - 14, PLATE_SIZE / 2 - 6)
+SCREW_HOLE = 3.2
+# Standoffs stand on the plate's axes, between the arms, holding the board up.
+STANDOFF_HEIGHT = 20.0
+STANDOFF_AT = [(15.25, 0.0), (-15.25, 0.0), (0.0, 15.25), (0.0, -15.25)]
 
 
 @dataclass
@@ -70,14 +77,19 @@ class Group:
 
 
 def make_plate() -> cq.Workplane:
-    return (
-        cq.Workplane().box(PLATE_SIZE, PLATE_SIZE, PLATE_THICKNESS).faces(">Z").workplane().hole(20)
-    )
+    plate = cq.Workplane().box(PLATE_SIZE, PLATE_SIZE, PLATE_THICKNESS)
+    screw_holes = [arm_tip(angle, along) for angle in CORNERS.values() for along in SCREW_ALONG]
+    top = plate.faces(">Z").workplane()
+    return top.hole(20).faces(">Z").workplane().pushPoints(screw_holes).hole(SCREW_HOLE)
 
 
 def make_arm() -> cq.Workplane:
     # Starts at x=0 so placing it is "rotate, then it points outward".
-    return cq.Workplane().center(ARM_LENGTH / 2, 0).box(ARM_LENGTH, 16, ARM_THICKNESS)
+    arm = cq.Workplane().center(ARM_LENGTH / 2, 0).box(ARM_LENGTH, 16, ARM_THICKNESS)
+    # The top face's workplane is centred on the arm, so hole x is measured from its middle.
+    arm_start = PLATE_SIZE / 2 - 20
+    holes = [(along - arm_start - ARM_LENGTH / 2, 0.0) for along in SCREW_ALONG]
+    return arm.faces(">Z").workplane().pushPoints(holes).hole(SCREW_HOLE)
 
 
 def make_motor() -> cq.Workplane:
@@ -99,12 +111,12 @@ def make_screw() -> cq.Workplane:
 
 
 def make_standoff() -> cq.Workplane:
-    return cq.Workplane().polygon(6, 5.5).extrude(20).faces(">Z").workplane().hole(3)
+    return cq.Workplane().polygon(6, 5.5).extrude(STANDOFF_HEIGHT).faces(">Z").workplane().hole(3)
 
 
 def make_board() -> cq.Workplane:
     board = cq.Workplane().box(36, 36, 1.6)
-    return board.faces(">Z").workplane().rect(30.5, 30.5, forConstruction=True).vertices().hole(3)
+    return board.faces(">Z").workplane().pushPoints(STANDOFF_AT).hole(3)
 
 
 def make_chip(x: float, y: float, z: float) -> cq.Workplane:
@@ -151,7 +163,7 @@ def frame_group() -> Group:
         )
     screw_number = 1
     for angle in CORNERS.values():
-        for along in (PLATE_SIZE / 2 - 14, PLATE_SIZE / 2 - 6):
+        for along in SCREW_ALONG:
             x, y = arm_tip(angle, along)
             loc = at(x, y, top + ARM_THICKNESS)
             children.append(Part(f"Screw_{screw_number}", screw, loc, "#888888"))
@@ -175,9 +187,7 @@ def electronics_group() -> Group:
     standoff, ic_small = Proto("Part37", make_standoff()), Proto("Chip", make_chip(3, 3, 1))
     children: list[Part | Group] = []
     # "Part37".."Part40": deliberately junk instance names too.
-    for i, (x, y) in enumerate(
-        [(15.25, 15.25), (-15.25, 15.25), (-15.25, -15.25), (15.25, -15.25)]
-    ):
+    for i, (x, y) in enumerate(STANDOFF_AT):
         children.append(Part(f"Part{37 + i}", standoff, at(x, y, 0), "#c0a000"))
     board = Group(
         "FlightController",
@@ -218,23 +228,69 @@ def messy_tree() -> Group:
     return Group("Drone", at(), parts)
 
 
+def arm_units_tree() -> Group:
+    """A drone built from four identical "ArmUnit" groups: same name, same children.
+
+    Like CPT17's eight "LegUnit" groups: names cannot tell the groups apart, only
+    where their children sit can.
+    """
+    plate, arm = Proto("CenterPlate", make_plate()), Proto("Arm", make_arm())
+    motor, prop, screw = (
+        Proto("Motor", make_motor()),
+        Proto("Prop", make_propeller()),
+        Proto("Screw", make_screw()),
+    )
+    arm_start, z = PLATE_SIZE / 2 - 20, ARM_THICKNESS
+    units: list[Part | Group] = [Part("CenterPlate", plate, at(), "#222222")]
+    for angle in CORNERS.values():
+        x, y = arm_tip(angle, arm_start)
+        children: list[Part | Group] = [
+            Part("Arm", arm, at(0, 0, z / 2), "#333333"),
+            Part("Motor", motor, at(ARM_LENGTH - 10, 0, z), "#b0b0b0"),
+            Part("Prop", prop, at(ARM_LENGTH - 10, 0, z + 21), "#ff7a00"),
+        ]
+        children += [
+            Part("Screw", screw, at(along - arm_start, 0, z), "#888888") for along in SCREW_ALONG
+        ]
+        units.append(Group("ArmUnit", at(x, y, PLATE_THICKNESS / 2, angle), children))
+    return Group("Drone", at(), units)
+
+
+def shared_tree() -> Group:
+    """Centre plate plus two "ArmUnit" groups that are one *definition* placed twice.
+
+    In the STEP file the second ArmUnit is not a copy of the first but a second
+    placement of the same subassembly (write_shared_step), as CAD tools do for
+    repeated subassemblies. Editing a part inside it would change both copies.
+    """
+    plate, *units = arm_units_tree().children
+    return Group("Drone", at(), [plate, units[0], units[2]])
+
+
 # ---------- writing ----------
 
 
-def to_assembly(group: Group) -> cq.Assembly:
-    assy = cq.Assembly(name=group.name, loc=group.loc)
+Names = dict[str, tuple[str, str]]  # placeholder name -> (node name, shape name)
+
+
+def to_assembly(group: Group, names: Names) -> cq.Assembly:
+    """Build the CadQuery assembly with numbered placeholder names.
+
+    CadQuery insists on unique names, but real exports repeat them (eight
+    "Clamp" parts, four "ArmUnit" groups). So every node is added as "1", "2",
+    ... and `names` remembers what fix_names() should write instead.
+    """
+    assy = cq.Assembly(name=group.name if not names else str(len(names)), loc=group.loc)
     for child in group.children:
+        placeholder = str(len(names) + 1)
         if isinstance(child, Group):
-            assy.add(to_assembly(child), name=child.name, loc=child.loc)
+            names[placeholder] = (child.name, child.name)
+            assy.add(to_assembly(child, names), name=placeholder, loc=child.loc)
         else:
+            names[placeholder] = (child.name, child.proto.name)
             color = cq.Color(child.color) if child.color else None
-            assy.add(child.proto.shape, name=child.name, loc=child.loc, color=color)
+            assy.add(child.proto.shape, name=placeholder, loc=child.loc, color=color)
     return assy
-
-
-def shape_names(group: Group) -> dict[str, str]:
-    """Instance name -> shape name, for every part in the tree."""
-    return {p.name: p.proto.name for p in flatten(group, cq.Location())}
 
 
 def name_of(label: TDF_Label) -> str:
@@ -246,33 +302,31 @@ def name_of(label: TDF_Label) -> str:
     return attr.Get().ToExtString()
 
 
-def fix_names(tool: XCAFDoc_ShapeTool, label: TDF_Label, shapes: dict[str, str]) -> None:
-    """Make the names look like a real CAD export.
+def fix_names(tool: XCAFDoc_ShapeTool, label: TDF_Label, names: Names) -> None:
+    """Replace the placeholders so the names look like a real CAD export.
 
     CadQuery names a shared shape after its *first* instance ("Motor_FL" for all
     four motors) and leaves the placement of a subassembly unnamed (readers would
     show "14" instead of "Frame"). Real tools name the shape ("Motor") and every
-    placement, so we do too.
+    placement, so we do too; blank names stay blank.
     """
     components = TDF_LabelSequence()
     tool.GetComponents_s(label, components)
     for i in range(1, components.Length() + 1):
         component, target = components.Value(i), TDF_Label()
         XCAFDoc_ShapeTool.GetReferredShape_s(component, target)
+        # A subassembly's placement is left unnamed; its definition carries the placeholder.
+        node_name, shape_name = names[name_of(component) or name_of(target)]
+        TDataStd_Name.Set_s(component, TCollection_ExtendedString(node_name))
+        TDataStd_Name.Set_s(target, TCollection_ExtendedString(shape_name))
         if XCAFDoc_ShapeTool.IsAssembly_s(target):
-            if not name_of(component):
-                TDataStd_Name.Set_s(component, TCollection_ExtendedString(name_of(target)))
-            fix_names(tool, target, shapes)
-        else:
-            # CadQuery replaces an empty instance name with a random UUID; put the "" back.
-            instance = name_of(component) if name_of(component) in shapes else ""
-            TDataStd_Name.Set_s(component, TCollection_ExtendedString(instance))
-            TDataStd_Name.Set_s(target, TCollection_ExtendedString(shapes[instance]))
+            fix_names(tool, target, names)
 
 
-def write_step(group: Group, path: Path) -> None:
-    """Like Assembly.export(path), but with one root and proper shape/placement names."""
-    root, doc = toCAF(to_assembly(group), coloredSTEP=True)
+def build_doc(group: Group) -> tuple[TDocStd_Document, XCAFDoc_ShapeTool, TDF_Label]:
+    """The XCAF document for a tree: one root and proper shape/placement names."""
+    names: Names = {}
+    root, doc = toCAF(to_assembly(group, names), coloredSTEP=True)
     tool = XCAFDoc_DocumentTool.ShapeTool_s(doc.Main())
     # toCAF wraps the top assembly in an extra placement label, which would make
     # the file read as "Drone -> Drone -> parts". Drop the wrapper, keep the assembly.
@@ -280,7 +334,39 @@ def write_step(group: Group, path: Path) -> None:
     XCAFDoc_ShapeTool.GetReferredShape_s(root, top)
     tool.RemoveShape(root, False)
     tool.UpdateAssemblies()
-    fix_names(tool, top, shape_names(group))
+    fix_names(tool, top, names)
+    return doc, tool, top
+
+
+def write_step(group: Group, path: Path) -> None:
+    """Like Assembly.export(path), but with one root and proper shape/placement names."""
+    doc, _, _ = build_doc(group)
+    write_doc(doc, path)
+    restore_blank_names(path)
+
+
+def write_shared_step(group: Group, path: Path) -> None:
+    """write_step, but a top-level group repeating an earlier group's name is written
+    as a second placement of that group's definition instead of its own copy."""
+    kept: list[Part | Group] = []
+    repeats: list[Group] = []
+    for child in group.children:
+        is_repeat = isinstance(child, Group) and any(
+            isinstance(k, Group) and k.name == child.name for k in kept
+        )
+        (repeats if is_repeat else kept).append(child)  # type: ignore[arg-type]
+    doc, tool, top = build_doc(Group(group.name, group.loc, kept))
+    components = TDF_LabelSequence()
+    tool.GetComponents_s(top, components)
+    definitions: dict[str, TDF_Label] = {}
+    for i in range(1, components.Length() + 1):
+        definition = TDF_Label()
+        XCAFDoc_ShapeTool.GetReferredShape_s(components.Value(i), definition)
+        definitions.setdefault(name_of(components.Value(i)), definition)
+    for repeat in repeats:
+        placed = tool.AddComponent(top, definitions[repeat.name], repeat.loc.wrapped)
+        TDataStd_Name.Set_s(placed, TCollection_ExtendedString(repeat.name))
+    tool.UpdateAssemblies()
     write_doc(doc, path)
     restore_blank_names(path)
 
@@ -288,8 +374,9 @@ def write_step(group: Group, path: Path) -> None:
 def restore_blank_names(path: Path) -> None:
     # OpenCascade refuses to write an empty product name and puts its own
     # ("Open CASCADE STEP translator 7.9 ...") instead. We want the blank back.
-    text = re.sub(r"'Open CASCADE STEP translator [^']*'", "''", path.read_text())
-    path.write_text(text)
+    text = path.read_text(encoding="utf-8")
+    text = re.sub(r"'Open CASCADE STEP translator [^']*'", "''", text)
+    path.write_text(text, encoding="utf-8")
 
 
 def write_single_part(
@@ -344,9 +431,42 @@ def count_unique(parts: list[Part]) -> int:
     return len({id(p.proto) for p in parts})
 
 
+# Two touching parts intersect in a face, not a volume, so anything over this is a real clash.
+MAX_OVERLAP = 0.01  # mm³
+
+
+def overlaps(parts: list[Part]) -> list[tuple[str, str, float]]:
+    """Every pair of placed solids that share volume: (name, name, mm³).
+
+    Bounding boxes rule out most of the 465 pairs before any boolean runs.
+    """
+    placed = [(p.name, p.proto.shape.val().moved(p.loc)) for p in parts]
+    boxes = [shape.BoundingBox() for _, shape in placed]
+    clashes: list[tuple[str, str, float]] = []
+    for i, (name_a, a) in enumerate(placed):
+        for j in range(i + 1, len(placed)):
+            name_b, b = placed[j]
+            if not _boxes_touch(boxes[i], boxes[j]):
+                continue
+            volume = a.intersect(b).Volume()
+            if volume > MAX_OVERLAP:
+                clashes.append((name_a, name_b, volume))
+    return clashes
+
+
+def _boxes_touch(a: cq.BoundBox, b: cq.BoundBox) -> bool:
+    return (
+        a.xmin <= b.xmax and b.xmin <= a.xmax
+        and a.ymin <= b.ymax and b.ymin <= a.ymax
+        and a.zmin <= b.zmax and b.zmin <= a.zmax
+    )  # fmt: skip
+
+
 def main() -> None:
     tree = drone_tree()
     parts = flatten(tree, cq.Location())
+    for name_a, name_b, volume in overlaps(parts):
+        raise SystemExit(f"{name_a} and {name_b} overlap by {volume:.2f} mm³")
 
     write_step(tree, HERE / "drone.step")
     check_instancing(HERE / "drone.step", count_unique(parts), len(parts))
@@ -358,6 +478,11 @@ def main() -> None:
     # The messy file is *meant* to copy geometry: one solid per part.
     write_step(messy_tree(), HERE / "drone_messy.step")
     check_instancing(HERE / "drone_messy.step", len(parts), len(parts))
+
+    shared = shared_tree()
+    write_shared_step(shared, HERE / "drone_shared.step")
+    # 5 unique solids; occurrences: plate + 2 ArmUnit placements + 5 parts inside the unit.
+    check_instancing(HERE / "drone_shared.step", count_unique(flatten(shared, cq.Location())), 8)
 
     bracket = make_bracket()
     write_single_part(bracket, "Bracket", "#7f8c8d", HERE / "bracket.step")

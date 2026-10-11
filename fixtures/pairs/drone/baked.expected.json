@@ -1,0 +1,17 @@
+{
+  "old": "v1.step",
+  "new": "baked.step",
+  "note": "same drone with every copy baked into its own solid (no change)",
+  "keys": "names from the root down; the k-th same-named sibling (k >= 1) is 'Name#k'",
+  "changes": [],
+  "added": [],
+  "removed": [],
+  "summary": {
+    "added": 0,
+    "removed": 0,
+    "moved": 0,
+    "renamed": 0,
+    "modified": 0,
+    "re-parented": 0
+  }
+}
