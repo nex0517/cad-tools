@@ -39,6 +39,8 @@ With the `diff/` package installed (`pip install -e diff`):
 ```sh
 kyumi diff v1.kyumi v2.kyumi -o diff.json                  # what changed, by part
 kyumi diff v1.kyumi v2.kyumi --detail Drone/Frame/CenterPlate   # added/removed material of one part
+kyumi diff v1.kyumi v2.kyumi --detail-all --out-dir v2-detail    # the same for every modified part, ahead
+kyumi view v1.kyumi v2.kyumi --detail v2-detail            # the new model coloured by change
 ```
 
 `--detail` writes `detail/added.glb`, `detail/removed.glb` and `detail/detail.json`
@@ -68,7 +70,7 @@ for node in model.nodes:
 | `kyumi/viewer.py`  | `kyumi view`: serves `viewer.html`, `/model.json` and the meshes from the zip |
 | `kyumi/viewer.html`| the page: three.js from a CDN, orbit, click-to-select, tree panel. No build step |
 | `kyumi/cli.py`     | the `kyumi` command |
-| `real_files.py`    | `python core/real_files.py`: imports every STEP in `fixtures/real/` (not committed) and writes `docs/real-files.md` |
+| `real_files.py`    | `python core/real_files.py`: imports every STEP in `fixtures/real/` (not committed) and writes `fixtures/real/real-files.md` (gitignored; pasted into `docs/real-files.md`) |
 
 ## Tests
 
