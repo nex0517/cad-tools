@@ -37,7 +37,7 @@ def changes_json(
     """`/changes.json`: summary, per-new-id status, ghosts of removed parts, moves."""
     old_index, new_index = Index(old), Index(new)
     by_new_id = {c.new_id: c for c in result.changes}
-    added = {tuple(k) for k in result.added}  # parts and groups alike
+    matched_new = set(result.matches.values())  # ids, not keys: keys can collide
     hint = NOT_COMPUTED.format(
         old=package_name(old), new=package_name(new), out_dir=detail_dir or "DIR"
     )
@@ -45,8 +45,8 @@ def changes_json(
     for node in new_index.ordered():  # parents before children, so inheritance can look up
         own = by_new_id.get(node.id)
         own_class = strongest(own.tags) if own else None
-        if tuple(new_index.key[node.id]) in added:
-            own_class = "added"
+        if node.id not in matched_new:
+            own_class = "added"  # parts and groups alike
         inherited_from = None
         if own_class not in ("modified", "added") and not has_move(own):
             inherited_from = nearest_moved_ancestor(new_index, node.id, by_new_id)

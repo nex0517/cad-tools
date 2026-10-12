@@ -6,6 +6,7 @@ import importlib
 import json
 import threading
 import time
+from dataclasses import replace
 from http.server import HTTPServer
 from pathlib import Path
 from urllib.error import HTTPError
@@ -158,6 +159,26 @@ def test_every_new_node_gets_the_class_expected_json_implies(
     assert got == expected_classes(new, expected)
     assert payload["summary"] == expected["summary"]
     assert len(payload["ghosts"]) == expected["summary"]["removed"]
+
+
+def test_added_is_decided_by_id_not_by_key(tmp_path: Path) -> None:
+    """A part literally named `Screw#1` and the second of two `Screw` siblings get
+    the same key; an unmatched one must not paint its matched namesake green."""
+    v1 = imported(PAIRS / "v1.step", tmp_path)
+    nodes = [replace(n, name="Screw") if n.name in ("Screw_1", "Screw_2") else n for n in v1.nodes]
+    far = replace(v1.node("n8"), id="n99", name="Screw#1", transform=list(v1.node("n8").transform))
+    far.transform[3] += 500.0
+    nodes.append(far)
+    new = load(
+        packaged(Model(v1.source_file, v1.source_units, v1.shapes, nodes), tmp_path / "n.kyumi")
+    )
+    result = diff(v1, new)
+    index = Index(new)
+    assert index.key["n8"] == index.key["n99"] == ["Drone", "Frame", "Screw#1"]
+    status = changes_json(v1, new, result, None, None)["status"]
+    assert status["n8"]["class"] == "renamed"
+    assert status["n99"]["class"] == "added"
+    assert sum(s["class"] == "added" for s in status.values()) == 1
 
 
 def test_rotate_and_arms_colour_the_whole_group(tmp_path: Path) -> None:
