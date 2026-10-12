@@ -142,19 +142,22 @@ def test_a_rerun_removes_stale_meshes(packages: dict[str, Path], tmp_path: Path)
 # ---- Part B: /changes.json ----------------------------------------------------
 
 
-def expected_classes(new: Model, expected: dict) -> dict[str, tuple[str | None, bool]]:
-    """What expected.json says each new node is, from its own tags or, for a part
-    without a move of its own, its nearest moved / re-parented ancestor."""
-    order = ("added", "modified", "moved", "re-parented", "renamed")
-    by_key = {tuple(c["new"]): c["tags"] for c in expected["changes"]}
-    added = {tuple(k) for k in expected["added"]}
-    index = Index(new)
+def expected_classes(
+    model: Model, expected: dict, side: str = "new"
+) -> dict[str, tuple[str | None, bool]]:
+    """What expected.json says each node of one version is, from its own tags or,
+    for a part without a move of its own, its nearest moved / re-parented ancestor."""
+    missing = "added" if side == "new" else "removed"
+    order = (missing, "modified", "moved", "re-parented", "renamed")
+    by_key = {tuple(c[side]): c["tags"] for c in expected["changes"]}
+    added = {tuple(k) for k in expected[missing]}
+    index = Index(model)
     classes = {}
-    for node in new.nodes:
+    for node in model.nodes:
         key = tuple(index.key[node.id])
         own = sorted(by_key.get(key, []), key=order.index)
         if key in added:
-            classes[node.id] = ("added", False)
+            classes[node.id] = (missing, False)
             continue
         if own and own[0] in ("modified",) or {"moved", "re-parented"} & set(own):
             classes[node.id] = (own[0], False)
@@ -191,6 +194,54 @@ def test_every_new_node_gets_the_class_expected_json_implies(
     assert got == expected_classes(new, expected)
     assert payload["summary"] == expected["summary"]
     assert len(payload["ghosts"]) == expected["summary"]["removed"]
+
+
+@pytest.mark.parametrize("expected_file", EXPECTED, ids=[p.stem.split(".")[0] for p in EXPECTED])
+def test_every_old_node_gets_the_class_expected_json_implies(
+    expected_file: Path, tmp_path_factory: pytest.TempPathFactory
+) -> None:
+    """`old_status` (Version 1 mode) is the same classification run over the old
+    tree: removed instead of added, old keys, and the moves inherited the same way."""
+    cache = tmp_path_factory.getbasetemp() / "view-cache"
+    cache.mkdir(exist_ok=True)
+    expected = json.loads(expected_file.read_text(encoding="utf-8"))
+    old = imported(PAIRS / expected["old"], cache)
+    new = imported(PAIRS / expected["new"], cache)
+    result = diff(old, new)
+    payload = changes_json(old, new, result, None, None)
+    got = {i: (s["class"], s["inherited"]) for i, s in payload["old_status"].items()}
+    assert got == expected_classes(old, expected, "old")
+    assert set(payload["old_status"]) == {n.id for n in old.nodes}
+    # The two id spaces stay apart; each entry names its partner in the other one.
+    for old_id, new_id in result.matches.items():
+        assert payload["old_status"][old_id]["new_id"] == new_id
+        assert payload["status"][new_id]["old_id"] == old_id
+        if payload["status"][new_id]["old_key"] is not None:  # a changed pair
+            assert payload["status"][new_id]["old_key"] == payload["old_status"][old_id]["old_key"]
+    for entry in payload["old_status"].values():
+        assert entry["class"] != "added"
+    for entry in payload["status"].values():
+        assert entry["class"] != "removed"
+
+
+def test_rotate_inherits_the_move_on_the_old_side_too(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> None:
+    cache = tmp_path_factory.getbasetemp() / "view-cache"
+    cache.mkdir(exist_ok=True)
+    old, new = imported(PAIRS / "v1.step", cache), imported(PAIRS / "rotate.step", cache)
+    payload = changes_json(old, new, diff(old, new), None, None)
+    frame = next(i for i, s in payload["old_status"].items() if s["old_key"] == ["Drone", "Frame"])
+    assert payload["old_status"][frame] == {
+        **payload["old_status"][frame],
+        "class": "moved",
+        "inherited": False,
+    }
+    under = [s for s in payload["old_status"].values() if s["old_key"][:2] == ["Drone", "Frame"]]
+    assert len(under) == 14 and all(
+        s["class"] == "moved" and s["inherited"] == (s["old_key"] != ["Drone", "Frame"])
+        for s in under
+    )
 
 
 def test_added_is_decided_by_id_not_by_key(tmp_path: Path) -> None:
@@ -295,12 +346,17 @@ def test_routes_are_a_whitelist(packages: dict[str, Path], hole_detail: Path) ->
     with served(new, diff_view(old, new, None)) as base:
         (ghost,) = diff_view(old, new, None).changes["ghosts"]
         assert status_of(base + ghost["mesh"]) == 200
-        kept = next(s.mesh for s in old.shapes.values() if f"/old/{s.mesh}" != ghost["mesh"])
-        assert status_of(f"{base}/old/{kept}") == 404  # that shape was not removed
+        for shape in old.shapes.values():  # Version 1 mode draws every old part
+            assert status_of(f"{base}/old/{shape.mesh}") == 200
+        assert status_of(f"{base}/old/model.json") == 200
         assert status_of(f"{base}/old/../manifest.json") == 404
         assert status_of(f"{base}/old/manifest.json") == 404
-        for route in ("/changes.json", ghost["mesh"]):
+        assert status_of(f"{base}/old/meshes/../manifest.json") == 404
+        for route in ("/changes.json", ghost["mesh"], "/old/model.json"):
             assert status_of(base + route, host="evil.example:80") == 403
+    with served(new, None) as base:  # one package: nothing old exists
+        assert status_of(f"{base}/old/model.json") == 404
+        assert status_of(base + ghost["mesh"]) == 404
 
     old, new = load(packages["v1"]), load(packages["hole"])
     view = diff_view(old, new, hole_detail)
@@ -314,6 +370,17 @@ def test_routes_are_a_whitelist(packages: dict[str, Path], hole_detail: Path) ->
         assert status_of(f"{base}/detail/{unchanged}/removed.glb") == 404
         assert status_of(f"{base}/detail/old:{plate}/removed.glb") == 404
         assert status_of(f"{base}/detail/{plate}/removed.glb", host="evil.example:80") == 403
+
+
+def test_old_model_json_is_the_old_package(packages: dict[str, Path]) -> None:
+    old, new = load(packages["v1"]), load(packages["delete"])
+    with served(new, diff_view(old, new, None)) as base:
+        served_old = json.loads(urlopen(f"{base}/old/model.json").read())
+        served_new = json.loads(urlopen(f"{base}/model.json").read())
+    assert {n["id"] for n in served_old["nodes"]} == {n.id for n in old.nodes}
+    assert len(served_old["nodes"]) == len(served_new["nodes"]) + 1
+    screw = next(n for n in served_old["nodes"] if n["name"] == "Screw_3")
+    assert screw["world"] == old.world_transform(screw["id"]).T.flatten().tolist()
 
 
 def byshape(model: Model, node_id: str) -> bool:

@@ -40,7 +40,7 @@ With the `diff/` package installed (`pip install -e diff`):
 kyumi diff v1.kyumi v2.kyumi -o diff.json                  # what changed, by part
 kyumi diff v1.kyumi v2.kyumi --detail Drone/Frame/CenterPlate   # added/removed material of one part
 kyumi diff v1.kyumi v2.kyumi --detail-all --out-dir v2-detail    # the same for every modified part, ahead
-kyumi view v1.kyumi v2.kyumi --detail v2-detail            # the new model coloured by change
+kyumi view v1.kyumi v2.kyumi --detail v2-detail            # Changes / Version 1 / Version 2 modes, change list
 ```
 
 `--detail` writes `detail/added.glb`, `detail/removed.glb` and `detail/detail.json`
@@ -68,7 +68,7 @@ for node in model.nodes:
 | `kyumi/package.py` | writes/reads the zip; `import_step()` and `load()` |
 | `kyumi/model.py`   | the `Model`, `Shape`, `Node` dataclasses that diff and categorize will use |
 | `kyumi/viewer.py`  | `kyumi view`: serves `viewer.html`, `/model.json` and the meshes from the zip |
-| `kyumi/viewer.html`| the page: three.js from a CDN, orbit, click-to-select, tree panel. No build step |
+| `kyumi/viewer.html`| the page: three.js from a CDN, orbit, click-to-select, change list and tree, three modes in diff mode. No build step |
 | `kyumi/cli.py`     | the `kyumi` command |
 | `real_files.py`    | `python core/real_files.py`: imports every STEP in `fixtures/real/` (not committed) and writes `fixtures/real/real-files.md` (gitignored; pasted into `docs/real-files.md`) |
 

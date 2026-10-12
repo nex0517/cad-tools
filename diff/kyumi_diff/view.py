@@ -34,41 +34,21 @@ def changes_json(
     details: dict[str, dict] | None,
     detail_dir: Path | None,
 ) -> dict:
-    """`/changes.json`: summary, per-new-id status, ghosts of removed parts, moves."""
+    """`/changes.json`: summary, per-id status for both versions, ghosts of removed
+    parts, moves. `status` is keyed by new ids, `old_status` by old ids; the two id
+    spaces never mix, each entry names its partner in the other version."""
     old_index, new_index = Index(old), Index(new)
-    by_new_id = {c.new_id: c for c in result.changes}
-    matched_new = set(result.matches.values())  # ids, not keys: keys can collide
     hint = NOT_COMPUTED.format(
         old=package_name(old), new=package_name(new), out_dir=detail_dir or "DIR"
     )
-    status: dict[str, dict] = {}
-    for node in new_index.ordered():  # parents before children, so inheritance can look up
-        own = by_new_id.get(node.id)
-        own_class = strongest(own.tags) if own else None
-        if node.id not in matched_new:
-            own_class = "added"  # parts and groups alike
-        inherited_from = None
-        if own_class not in ("modified", "added") and not has_move(own):
-            inherited_from = nearest_moved_ancestor(new_index, node.id, by_new_id)
-        if inherited_from is not None:
-            cls, inherited = strongest(by_new_id[inherited_from].tags), True
-        else:
-            cls, inherited = own_class, False
-        entry = {
-            "class": cls,
-            "tags": list(own.tags) if own else [],
-            "delta": dict(own.delta) if own else {},
-            "inherited": inherited,
-            "old_key": own.old if own else None,
-            "new_key": new_index.key[node.id],
-        }
-        if own and "modified" in own.tags and node.shape is not None:
-            entry["detail"] = detail_status(details, node.id, hint)
-        status[node.id] = entry
-    for node in reversed(new_index.ordered()):  # children before parents
-        if node.shape is None:
-            kids = [status[k.id]["class"] for k in new_index.children.get(node.id, [])]
-            status[node.id]["children_class"] = strongest_class([*kids])
+    new_of = result.matches  # old id -> new id (ids, not keys: keys can collide)
+    old_of = {n: o for o, n in new_of.items()}
+    status = side_status(
+        new_index, {c.new_id: c for c in result.changes}, old_of, "added", "old_id", details, hint
+    )
+    old_status = side_status(
+        old_index, {c.old_id: c for c in result.changes}, new_of, "removed", "new_id"
+    )
 
     ghosts = []
     for leaf in old_index.leaves:
@@ -108,9 +88,54 @@ def changes_json(
         "new": package_name(new),
         "summary": result.summary,
         "status": status,
+        "old_status": old_status,
         "ghosts": ghosts,
         "moves": moves,
     }
+
+
+def side_status(
+    index: Index,
+    by_id: dict[str, Change],
+    partner_of: dict[str, str],
+    missing_class: str,
+    partner_field: str,
+    details: dict[str, dict] | None = None,
+    hint: str = "",
+) -> dict[str, dict]:
+    """One version's nodes classified: its own change, `missing_class` when the node
+    has no partner in the other version, or the move of its nearest moved ancestor."""
+    status: dict[str, dict] = {}
+    for node in index.ordered():  # parents before children, so inheritance can look up
+        own = by_id.get(node.id)
+        own_class = strongest(own.tags) if own else None
+        if node.id not in partner_of:
+            own_class = missing_class  # parts and groups alike
+        inherited_from = None
+        if own_class not in ("modified", missing_class) and not has_move(own):
+            inherited_from = nearest_moved_ancestor(index, node.id, by_id)
+        if inherited_from is not None:
+            cls, inherited = strongest(by_id[inherited_from].tags), True
+        else:
+            cls, inherited = own_class, False
+        this_side, other_side = ("new", "old") if missing_class == "added" else ("old", "new")
+        entry = {
+            "class": cls,
+            "tags": list(own.tags) if own else [],
+            "delta": dict(own.delta) if own else {},
+            "inherited": inherited,
+            f"{this_side}_key": index.key[node.id],
+            f"{other_side}_key": getattr(own, other_side) if own else None,
+            partner_field: partner_of.get(node.id),
+        }
+        if details is not None and own and "modified" in own.tags and node.shape is not None:
+            entry["detail"] = detail_status(details, node.id, hint)
+        status[node.id] = entry
+    for node in reversed(index.ordered()):  # children before parents
+        if node.shape is None:
+            kids = [status[k.id]["class"] for k in index.children.get(node.id, [])]
+            status[node.id]["children_class"] = strongest_class([*kids])
+    return status
 
 
 def has_move(change: Change | None) -> bool:
@@ -122,7 +147,7 @@ def strongest(tags: list[str]) -> str | None:
 
 
 def strongest_class(classes: list[str | None]) -> str | None:
-    order = ("added", *CLASSES)
+    order = ("added", "removed", *CLASSES)
     present = [c for c in classes if c is not None]
     return min(present, key=order.index) if present else None
 
@@ -167,15 +192,6 @@ def detail_status(details: dict[str, dict] | None, new_id: str, hint: str) -> di
         "volume_change_mm3": entry["volume_change_mm3"],
         "aligned": entry["aligned"],
         "files": {side: entry["files"][side] is not None for side in ("added", "removed")},
-    }
-
-
-def ghost_meshes(old: Model, result: Diff) -> set[str]:
-    """Mesh paths (`meshes/sN.glb`) of the removed parts: the only old files served."""
-    return {
-        old.shapes[leaf.shape].mesh
-        for leaf in old.leaves()
-        if leaf.id not in result.matches and old.shapes[leaf.shape].mesh
     }
 
 

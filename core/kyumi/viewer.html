@@ -5,11 +5,35 @@
 <title>kyumi viewer</title>
 <style>
   html, body { margin: 0; height: 100%; font: 13px/1.4 system-ui, sans-serif; color: #ddd; background: #1b1d22; }
-  body { display: grid; grid-template-columns: 280px 1fr 300px; height: 100%; }
-  #tree, #info { overflow: auto; padding: 10px; background: #23262d; }
-  #tree { border-right: 1px solid #333; }
+  body { display: grid; grid-template-rows: auto 1fr; grid-template-columns: 300px 1fr 300px; height: 100%; }
+  button { font: inherit; color: inherit; background: none; border: 1px solid #444; border-radius: 4px; padding: 2px 8px; cursor: pointer; }
+  button:hover { background: #333842; }
+  button.on { background: #2a63c4; border-color: #2a63c4; color: #fff; }
+  /* top bar */
+  #top { grid-column: 1 / -1; display: flex; align-items: center; gap: 16px; padding: 8px 16px; background: #23262d; border-bottom: 1px solid #333; }
+  #files { font-weight: 600; color: #fff; white-space: nowrap; }
+  #chips { display: flex; gap: 8px; flex-wrap: wrap; }
+  .chip { display: inline-flex; align-items: center; gap: 6px; padding: 1px 8px; border-radius: 10px; }
+  .dot { display: inline-block; width: 10px; height: 10px; border-radius: 2px; flex: none; }
+  #modes { display: flex; }
+  #modes button { border-radius: 0; }
+  #modes button:first-child { border-radius: 4px 0 0 4px; }
+  #modes button:last-child { border-radius: 0 4px 4px 0; }
+  #modes button + button { border-left: none; }
+  #modes kbd { color: #888; font: inherit; margin-left: 4px; }
+  #top label { color: #aaa; cursor: pointer; white-space: nowrap; }
+  #ready { margin-left: auto; color: #888; white-space: nowrap; }
+  #loading { color: #f5a623; white-space: nowrap; }
+  /* side panels */
+  #left, #info { overflow: auto; padding: 8px; background: #23262d; }
+  #left { border-right: 1px solid #333; display: flex; flex-direction: column; }
   #info { border-left: 1px solid #333; }
+  #tabs { display: flex; gap: 8px; margin-bottom: 8px; }
+  #tabs button { flex: 1; }
+  #stage { position: relative; min-width: 0; }
   canvas { display: block; width: 100%; height: 100%; }
+  #legend { position: absolute; left: 8px; bottom: 8px; display: flex; gap: 12px; padding: 4px 8px; background: rgba(35, 38, 45, 0.85); border-radius: 4px; color: #bbb; }
+  #legend span.dot { margin-right: 4px; }
   h2 { margin: 0 0 8px; font-size: 14px; color: #fff; }
   ul { list-style: none; margin: 0; padding-left: 14px; }
   li > div { padding: 2px 4px; border-radius: 3px; cursor: pointer; white-space: nowrap; }
@@ -22,14 +46,21 @@
   table { border-collapse: collapse; width: 100%; }
   td { padding: 2px 4px; vertical-align: top; }
   td:first-child { color: #999; white-space: nowrap; }
-  #summary { color: #aaa; margin: -4px 0 8px; font-size: 12px; }
   .tag { display: inline-block; margin-left: 6px; padding: 0 5px; border-radius: 8px; font-size: 11px; color: #111; background: #888; }
   .tag.added { background: #3cb371; } .tag.removed { background: #d9534f; }
   .tag.moved, .tag.re-parented { background: #4f8ef7; } .tag.modified { background: #f5a623; }
   .tag.renamed { background: #ccc; } .tag.inherited { opacity: 0.6; }
   #removed h3 { margin: 12px 0 4px; font-size: 13px; color: #d9534f; }
-  label.toggle-line { display: block; margin: 8px 0; color: #aaa; cursor: pointer; }
-  .legend span { display: inline-block; width: 10px; height: 10px; margin: 0 4px 0 8px; border-radius: 2px; }
+  /* change list */
+  #changes h3 { margin: 8px 0 4px; font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; color: #888; }
+  .change { display: grid; grid-template-columns: 10px 1fr auto; gap: 8px; align-items: baseline; padding: 4px 8px; border-radius: 3px; cursor: pointer; }
+  .change:hover { background: #333842; }
+  .change.selected { background: #2a63c4; color: #fff; }
+  .change .dot { position: relative; top: 1px; }
+  .change .where { display: block; color: #888; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .change.selected .where, .change.selected .delta { color: #cfe0ff; }
+  .change .delta { color: #aaa; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  .hidden { display: none !important; }
 </style>
 <script type="importmap">
 { "imports": {
@@ -39,9 +70,25 @@
 </script>
 </head>
 <body>
-<div id="tree"><h2 id="title">loading…</h2><div id="summary"></div><div id="treeRoot"></div><div id="removed"></div></div>
-<canvas id="view"></canvas>
-<div id="info"><h2>Nothing selected</h2><p class="dim">Click a part in the 3D view or in the tree.
+<div id="top">
+  <span id="files">loading…</span>
+  <span id="chips"></span>
+  <span id="modes" class="hidden">
+    <button data-mode="v1">Version 1<kbd>1</kbd></button>
+    <button data-mode="v2">Version 2<kbd>2</kbd></button>
+    <button data-mode="changes">Changes<kbd>3</kbd></button>
+  </span>
+  <label id="unchangedLine" class="hidden"><input type="checkbox" id="unchanged"> show unchanged in their own colours</label>
+  <span id="loading"></span>
+  <span id="ready"></span>
+</div>
+<div id="left">
+  <div id="tabs" class="hidden"><button data-tab="changes">Changes</button><button data-tab="parts">Parts</button></div>
+  <div id="changes" class="hidden"></div>
+  <div id="parts"><div id="treeRoot"></div><div id="removed"></div></div>
+</div>
+<div id="stage"><canvas id="view"></canvas><div id="legend" class="hidden"></div></div>
+<div id="info"><h2>Nothing selected</h2><p class="dim">Click a part in the 3D view or in the list.
 Drag to orbit, right-drag to pan, scroll to zoom.</p></div>
 
 <script type="module">
@@ -50,24 +97,33 @@ import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { GLTFLoader } from "three/addons/loaders/GLTFLoader.js";
 
 // ---- data -----------------------------------------------------------------
+// Two id spaces, never mixed: NEW ids are plain strings and index `model`,
+// `diff.status` and `meshes`; OLD ids are written "old:<id>" everywhere on this
+// page and index `diff.old_status`, `ghosts`, `oldMeshes` and the lazily fetched
+// `oldModel`. The server tells which old id matches which new id
+// (`status[new].old_id`, `old_status[old].new_id`).
 const startedAt = performance.now();
 const model = await (await fetch("/model.json")).json();
 const byId = new Map(model.nodes.map(n => [n.id, n]));
 const childrenOf = id => model.nodes.filter(n => n.parent === id);
 // Diff mode: /changes.json exists only when the server was given two packages.
-// Its `status` is keyed by NEW ids; `ghosts` carry OLD ids and live in their own map.
 const changesReply = await fetch("/changes.json");
 const diff = changesReply.ok ? await changesReply.json() : null;
 const statusOf = id => (diff ? diff.status[id] : null);
-document.getElementById("title").textContent = diff ? `${diff.old} → ${diff.new}` : model.file;
+const oldStatusOf = oldId => (diff ? diff.old_status[oldId] : null);
+const $ = id => document.getElementById(id);
+$("files").textContent = diff ? `${diff.old} → ${diff.new}` : model.file;
 
 const COLOURS = { added: 0x3cb371, removed: 0xd9534f, moved: 0x4f8ef7, "re-parented": 0x4f8ef7, modified: 0xf5a623 };
+const KINDS = ["modified", "added", "removed", "moved", "re-parented", "renamed"];  // list and chip order
 const UNCHANGED = 0x8a8a8a;
-let showUnchanged = false;                   // diff mode: real colours for unchanged parts?
+let showUnchanged = false;                    // diff mode: real colours for unchanged parts?
+let mode = diff ? "changes" : "v2";           // "v1" | "v2" | "changes"; one file behaves like v2
+let selected = null;                          // new node id, or "old:<id>"
+const detailMeshes = [];                      // added.glb / removed.glb of the selected part
 
-function paintFor(node) {
-  // Diff mode colours parts by their change; renamed keeps its own colour (the tree shows the tag).
-  const st = statusOf(node.id);
+function paintFor(node, st) {
+  // Colour by the change; renamed keeps its own colour (the list shows the tag).
   if (!diff) return node.color || "#9a9a9a";
   if (st && st.class && COLOURS[st.class] !== undefined) return COLOURS[st.class];
   if (st && st.class === "renamed") return node.color || "#9a9a9a";
@@ -75,7 +131,7 @@ function paintFor(node) {
 }
 
 // ---- scene ----------------------------------------------------------------
-const canvas = document.getElementById("view");
+const canvas = $("view");
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
 renderer.setPixelRatio(devicePixelRatio);
 const scene = new THREE.Scene();
@@ -88,53 +144,50 @@ const sun = new THREE.DirectionalLight(0xffffff, 1.4);
 sun.position.set(1, -1, 2);
 scene.add(sun);
 
-// One GLB per shape, loaded once; each node that uses it gets its own THREE.Mesh
-// sharing that geometry (same idea as shapes vs nodes in the manifest).
 const loader = new GLTFLoader();
-const geometries = new Map();                 // shape id -> BufferGeometry
-await Promise.all(Object.entries(model.shapes).filter(([, s]) => s.mesh).map(async ([id, s]) => {
-  const gltf = await loader.loadAsync("/" + s.mesh);
+async function loadGeometry(url) {
+  const gltf = await loader.loadAsync(url);
   const geo = gltf.scene.getObjectByProperty("isMesh", true).geometry;
   geo.computeVertexNormals();                 // the importer skips normals to keep files small
-  geometries.set(id, geo);
-}));
+  return geo;
+}
+function placedMesh(geometry, colour, world, nodeId, opacity = 1) {
+  const material = new THREE.MeshStandardMaterial({
+    color: colour, metalness: 0.1, roughness: 0.6, transparent: true, opacity,
+  });
+  const mesh = new THREE.Mesh(geometry, material);
+  mesh.matrixAutoUpdate = false;
+  mesh.matrix.fromArray(world);               // already column-major from the server
+  mesh.userData.nodeId = nodeId;
+  scene.add(mesh);
+  return mesh;
+}
 
-const meshes = new Map();                     // node id -> THREE.Mesh
+// One GLB per shape, loaded once; each node that uses it gets its own THREE.Mesh
+// sharing that geometry (same idea as shapes vs nodes in the manifest).
+const geometries = new Map();                 // new shape id -> BufferGeometry
+await Promise.all(Object.entries(model.shapes).filter(([, s]) => s.mesh).map(async ([id, s]) => {
+  geometries.set(id, await loadGeometry("/" + s.mesh));
+}));
+const meshes = new Map();                     // new node id -> THREE.Mesh
 for (const node of model.nodes) {
   if (!geometries.has(node.shape)) continue;
-  const material = new THREE.MeshStandardMaterial({
-    color: paintFor(node), metalness: 0.1, roughness: 0.6, transparent: true, opacity: 1,
-  });
-  const mesh = new THREE.Mesh(geometries.get(node.shape), material);
-  mesh.matrixAutoUpdate = false;
-  mesh.matrix.fromArray(node.world);          // already column-major from the server
-  mesh.userData.nodeId = node.id;
-  scene.add(mesh);
-  meshes.set(node.id, mesh);
+  meshes.set(node.id, placedMesh(geometries.get(node.shape), paintFor(node, statusOf(node.id)), node.world, node.id));
 }
 
 // Removed parts are ghosts: the OLD model's meshes at their OLD world transforms,
-// red, see-through, and not pickable (they are not in `meshes`).
+// red, see-through, and not pickable. Old geometry is cached by URL so Version 1
+// mode can reuse it later.
+const oldGeometries = new Map();              // "/old/meshes/sN.glb" -> BufferGeometry
 const ghosts = new Map();                     // "old:<id>" -> THREE.Mesh
 const moveLines = [];
 if (diff) {
-  const oldGeometries = new Map();            // old mesh URL -> BufferGeometry
   await Promise.all([...new Set(diff.ghosts.map(g => g.mesh).filter(Boolean))].map(async url => {
-    const gltf = await loader.loadAsync(url);   // once per shape, however many copies were removed
-    const geo = gltf.scene.getObjectByProperty("isMesh", true).geometry;
-    geo.computeVertexNormals();
-    oldGeometries.set(url, geo);
+    oldGeometries.set(url, await loadGeometry(url));
   }));
   for (const g of diff.ghosts) {
     if (!oldGeometries.has(g.mesh)) continue;
-    const material = new THREE.MeshStandardMaterial({
-      color: COLOURS.removed, transparent: true, opacity: 0.4, metalness: 0.1, roughness: 0.6,
-    });
-    const mesh = new THREE.Mesh(oldGeometries.get(g.mesh), material);
-    mesh.matrixAutoUpdate = false;
-    mesh.matrix.fromArray(g.world);
-    scene.add(mesh);
-    ghosts.set("old:" + g.old_id, mesh);
+    ghosts.set("old:" + g.old_id, placedMesh(oldGeometries.get(g.mesh), COLOURS.removed, g.world, "old:" + g.old_id, 0.4));
   }
   // A thin line from where a moved part (or group) was to where it is now, with a
   // dot at the old centre. Drawn on top: a 5 mm move is shorter than the part, so
@@ -152,6 +205,34 @@ if (diff) {
     scene.add(line, dot);
     moveLines.push(line, dot);
   }
+}
+
+// Version 1 needs the whole old model. It is fetched the first time that mode is
+// chosen, so the page is ready as fast as with one package.
+let oldModel = null;                          // /old/model.json, once loaded
+const oldById = new Map();                    // old id -> old node
+const oldChildrenOf = oldId => (oldModel ? oldModel.nodes.filter(n => n.parent === oldId) : []);
+const oldMeshes = new Map();                  // "old:<id>" -> THREE.Mesh (hidden unless mode is v1)
+let oldLoading = null;                        // the promise, so two quick presses load once
+function ensureOld() {
+  if (oldLoading) return oldLoading;
+  $("loading").textContent = "loading version 1…";
+  oldLoading = (async () => {
+    oldModel = await (await fetch("/old/model.json")).json();
+    for (const n of oldModel.nodes) oldById.set(n.id, n);
+    await Promise.all(Object.values(oldModel.shapes).filter(s => s.mesh && !oldGeometries.has("/old/" + s.mesh)).map(async s => {
+      oldGeometries.set("/old/" + s.mesh, await loadGeometry("/old/" + s.mesh));
+    }));
+    for (const node of oldModel.nodes) {
+      const shape = oldModel.shapes[node.shape];
+      if (!shape || !oldGeometries.has("/old/" + shape.mesh)) continue;
+      const mesh = placedMesh(oldGeometries.get("/old/" + shape.mesh), paintFor(node, oldStatusOf(node.id)), node.world, "old:" + node.id);
+      mesh.visible = false;
+      oldMeshes.set("old:" + node.id, mesh);
+    }
+    $("loading").textContent = "";
+  })();
+  return oldLoading;
 }
 
 // Frame the whole model.
@@ -175,79 +256,174 @@ function resize() {
     camera.updateProjectionMatrix();
   }
 }
+
+// A camera flight: position and target glide to their destination over 0.6 s.
+let flight = null;
+const easeInOut = t => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
+function flyTo(targetBox) {
+  if (!targetBox || targetBox.isEmpty()) return;
+  const to = targetBox.getCenter(new THREE.Vector3());
+  const r = Math.max(targetBox.getSize(new THREE.Vector3()).length() / 2, radius / 200);
+  const distance = Math.max(r / Math.sin(THREE.MathUtils.degToRad(camera.fov / 2)) * 1.2, controls.minDistance * 2);
+  const direction = camera.position.clone().sub(controls.target).normalize();
+  flight = {
+    start: performance.now(), duration: 600,
+    fromPos: camera.position.clone(), fromTarget: controls.target.clone(),
+    toPos: to.clone().add(direction.multiplyScalar(distance)), toTarget: to,
+  };
+}
 let ready = false;
 renderer.setAnimationLoop(() => {
-  resize(); controls.update(); renderer.render(scene, camera);
-  if (!ready) { ready = true; showSummary(); }
+  resize();
+  if (flight) {
+    const t = Math.min(1, (performance.now() - flight.start) / flight.duration), e = easeInOut(t);
+    camera.position.lerpVectors(flight.fromPos, flight.toPos, e);
+    controls.target.lerpVectors(flight.fromTarget, flight.toTarget, e);
+    if (t >= 1) flight = null;
+  }
+  controls.update();
+  renderer.render(scene, camera);
+  if (!ready) { ready = true; showReady(); }
 });
 
-function showSummary() {
+function showReady() {
   const parts = model.nodes.filter(n => n.shape).length;
   const seconds = ((performance.now() - startedAt) / 1000).toFixed(1);
-  const el = document.getElementById("summary");
-  el.textContent = "";
-  const line = document.createElement("div");
-  line.textContent = `${parts} parts, ready in ${seconds} s`;
-  el.append(line);
-  if (!diff) return;
-  const counts = Object.entries(diff.summary).filter(([, n]) => n).map(([k, n]) => `${k} ${n}`).join(", ");
-  const sum = document.createElement("div");
-  sum.textContent = counts || "no change";
-  el.append(sum);
-  const legend = document.createElement("div");
-  legend.className = "legend";
-  for (const [name, colour] of [["added", COLOURS.added], ["removed", COLOURS.removed], ["moved", COLOURS.moved], ["modified", COLOURS.modified]]) {
-    const dot = document.createElement("span");
-    dot.style.background = "#" + colour.toString(16).padStart(6, "0");
-    legend.append(dot, name);
-  }
-  el.append(legend);
-  const toggle = document.createElement("label");
-  toggle.className = "toggle-line";
-  const box = document.createElement("input");
-  box.type = "checkbox";
-  box.onchange = () => { showUnchanged = box.checked; repaint(); };
-  toggle.append(box, " show unchanged parts in their own colours");
-  el.append(toggle);
+  $("ready").textContent = diff ? `ready in ${seconds} s` : `${parts} parts, ready in ${seconds} s`;
 }
 
-function repaint() {
-  for (const [nodeId, mesh] of meshes) mesh.material.color.set(paintFor(byId.get(nodeId)));
+// ---- modes ----------------------------------------------------------------
+// Changes: the new model, removed ghosts, move lines and detail (today's diff view).
+// Version 2: the new model alone. Version 1: the old model alone, removed parts solid red.
+function applyMode() {
+  const v1 = mode === "v1";
+  for (const mesh of meshes.values()) mesh.visible = !v1;
+  for (const mesh of oldMeshes.values()) mesh.visible = v1;
+  for (const mesh of ghosts.values()) mesh.visible = mode === "changes";
+  for (const line of moveLines) line.visible = mode === "changes";
+  for (const mesh of detailMeshes) mesh.visible = !v1;
+  for (const b of document.querySelectorAll("#modes button")) b.classList.toggle("on", b.dataset.mode === mode);
 }
+
+// The selected part follows the switch when it exists on the other side; the
+// camera stays where it is.
+async function setMode(next) {
+  if (!diff || next === mode) return;
+  if (next === "v1") await ensureOld();
+  const was = selected;
+  mode = next;
+  applyMode();
+  select(counterpart(was, next), false);
+}
+function counterpart(id, target) {
+  if (!id) return null;
+  const isOld = id.startsWith("old:");
+  if (target === "v1") {
+    if (isOld) return id;
+    const partner = statusOf(id) && statusOf(id).old_id;
+    return partner ? "old:" + partner : null;
+  }
+  if (!isOld) return id;                      // v2 and changes both show new ids
+  if (target === "changes" && ghosts.has(id)) return id;
+  const partner = oldStatusOf(id.slice(4)) && oldStatusOf(id.slice(4)).new_id;
+  return partner || null;
+}
+
+if (diff) {
+  $("modes").classList.remove("hidden");
+  $("unchangedLine").classList.remove("hidden");
+  $("tabs").classList.remove("hidden");
+  $("changes").classList.remove("hidden");
+  $("parts").classList.add("hidden");
+  for (const b of document.querySelectorAll("#modes button")) b.onclick = () => setMode(b.dataset.mode);
+  for (const b of document.querySelectorAll("#tabs button")) b.onclick = () => showTab(b.dataset.tab);
+  $("unchanged").onchange = e => { showUnchanged = e.target.checked; repaint(); };
+  const legend = $("legend");
+  legend.classList.remove("hidden");
+  for (const [name, colour] of [["added", COLOURS.added], ["removed", COLOURS.removed], ["moved", COLOURS.moved], ["modified", COLOURS.modified]]) {
+    const item = document.createElement("span");
+    item.append(dotFor(colour), name);
+    legend.append(item);
+  }
+  const grey = document.createElement("span");
+  grey.append(dotFor(UNCHANGED), "unchanged");
+  legend.append(grey);
+  showTab("changes");
+  applyMode();
+}
+function showTab(tab) {
+  $("changes").classList.toggle("hidden", tab !== "changes");
+  $("parts").classList.toggle("hidden", tab !== "parts");
+  for (const b of document.querySelectorAll("#tabs button")) b.classList.toggle("on", b.dataset.tab === tab);
+}
+function dotFor(colour) {
+  const dot = document.createElement("span");
+  dot.className = "dot";
+  dot.style.background = typeof colour === "number" ? "#" + colour.toString(16).padStart(6, "0") : colour;
+  return dot;
+}
+function repaint() {
+  for (const [nodeId, mesh] of meshes) mesh.material.color.set(paintFor(byId.get(nodeId), statusOf(nodeId)));
+  for (const [oldId, mesh] of oldMeshes) mesh.material.color.set(paintFor(oldById.get(oldId.slice(4)), oldStatusOf(oldId.slice(4))));
+}
+
+document.addEventListener("keydown", e => {
+  if (e.target.tagName === "INPUT" || e.ctrlKey || e.metaKey || e.altKey) return;
+  if (e.key === "1") setMode("v1");
+  else if (e.key === "2") setMode("v2");
+  else if (e.key === "3") setMode("changes");
+  else if (e.key === "f" || e.key === "F") flyTo(selected ? boxOf(selected) : new THREE.Box3().setFromObject(scene));
+  else if (e.key === "Escape") select(null);
+});
 
 // ---- selection ------------------------------------------------------------
-let selected = null;                          // node id, or "old:<id>" for a ghost
 const HIGHLIGHT = new THREE.Color(0xffffff);  // a white glow: none of the five change colours
-const detailMeshes = [];                      // added.glb / removed.glb of the selected part
 
 function descendants(id) {
   const out = [id];
   for (const child of childrenOf(id)) out.push(...descendants(child.id));
   return out;
 }
+// Old descendants come from old_status keys (every old node has one), so a removed
+// group's ghosts can be found before /old/model.json has been fetched.
+function oldDescendants(oldId) {
+  const prefix = oldStatusOf(oldId).old_key;
+  return Object.entries(diff.old_status)
+    .filter(([, s]) => s.old_key.length >= prefix.length && prefix.every((k, i) => s.old_key[i] === k))
+    .map(([id]) => "old:" + id);
+}
 
-function select(id) {
+function select(id, reveal = true) {
   selected = id;
-  const isGhost = typeof id === "string" && id.startsWith("old:");
-  const lit = id && !isGhost ? new Set(descendants(id)) : new Set();
-  for (const [nodeId, mesh] of meshes) {
-    const on = lit.has(nodeId);
+  const isOld = typeof id === "string" && id.startsWith("old:");
+  const lit = !id ? new Set() : isOld ? new Set(oldDescendants(id.slice(4))) : new Set(descendants(id));
+  const glow = (mesh, on, strength) => {
     mesh.material.emissive.set(on ? HIGHLIGHT : 0x000000);
-    mesh.material.emissiveIntensity = on ? 0.2 : 0;  // still shows the change colour
-    mesh.material.opacity = 1;
+    mesh.material.emissiveIntensity = on ? strength : 0;  // still shows the change colour
+  };
+  for (const [nodeId, mesh] of meshes) { glow(mesh, lit.has(nodeId), 0.2); mesh.material.opacity = 1; }
+  for (const [oldId, mesh] of oldMeshes) glow(mesh, lit.has(oldId), 0.2);
+  for (const [ghostId, mesh] of ghosts) glow(mesh, lit.has(ghostId), 0.5);
+  const treeId = isOld ? oldStatusOf(id.slice(4)).new_id || null : id;  // the tree lists new ids
+  for (const row of document.querySelectorAll("#parts li > div")) {
+    row.classList.toggle("selected", row.dataset.id === id || row.dataset.id === treeId);
   }
-  for (const [ghostId, mesh] of ghosts) {
-    const on = ghostId === id;
-    mesh.material.emissive.set(on ? HIGHLIGHT : 0x000000);
-    mesh.material.emissiveIntensity = on ? 0.5 : 0;
-  }
-  for (const row of document.querySelectorAll("#tree li > div, #removed li > div")) {
-    row.classList.toggle("selected", row.dataset.id === id);
-  }
+  for (const row of document.querySelectorAll(".change")) row.classList.toggle("selected", row.dataset.id === id);
   for (const mesh of detailMeshes.splice(0)) scene.remove(mesh);
-  if (id && !isGhost) revealInTree(id);
-  if (id && !isGhost) showDetail(id);
+  if (id && !isOld && reveal) revealInTree(id);
+  if (id && !isOld) showDetail(id);
   showInfo(id);
+}
+
+// Where a part (or group) is on screen in the current mode: its meshes, or for a
+// removed one its ghosts; null when nothing of it is drawn.
+function boxOf(id) {
+  const isOld = id.startsWith("old:");
+  const ids = isOld ? oldDescendants(id.slice(4)) : descendants(id);
+  const pool = isOld ? (mode === "v1" ? oldMeshes : ghosts) : meshes;
+  const found = new THREE.Box3();
+  for (const i of ids) if (pool.has(i) && pool.get(i).visible) found.expandByObject(pool.get(i));
+  return found.isEmpty() ? null : found;
 }
 
 // A modified part with precomputed detail: the part goes see-through and the
@@ -260,13 +436,12 @@ async function showDetail(id) {
   if (meshes.has(id)) meshes.get(id).material.opacity = 0.25;
   for (const [side, colour] of [["added", COLOURS.added], ["removed", COLOURS.removed]]) {
     if (!st.detail.files[side]) continue;
-    const gltf = await loader.loadAsync(`/detail/${encodeURIComponent(id)}/${side}.glb`);
+    const geo = await loadGeometry(`/detail/${encodeURIComponent(id)}/${side}.glb`);
     if (selected !== id) return;              // the user moved on while it loaded
-    const geo = gltf.scene.getObjectByProperty("isMesh", true).geometry;
-    geo.computeVertexNormals();
     const mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: colour, metalness: 0.1, roughness: 0.5 }));
     mesh.matrixAutoUpdate = false;
     mesh.matrix.fromArray(node.world);
+    mesh.visible = mode !== "v1";
     scene.add(mesh);
     detailMeshes.push(mesh);
   }
@@ -283,13 +458,115 @@ canvas.addEventListener("pointerup", e => {
     ((e.clientX - rect.left) / rect.width) * 2 - 1,
     -((e.clientY - rect.top) / rect.height) * 2 + 1);
   raycaster.setFromCamera(pointer, camera);
-  const hit = raycaster.intersectObjects([...meshes.values()])[0];
+  const pickable = [...(mode === "v1" ? oldMeshes : meshes).values()];
+  const hit = raycaster.intersectObjects(pickable)[0];
   select(hit ? hit.object.userData.nodeId : null);
 });
 
-// ---- tree panel -----------------------------------------------------------
+// ---- change list ----------------------------------------------------------
 function fmt(x, digits = 1) { return Number(x).toFixed(digits); }
+const signed = v => (v < 0 ? "−" : "+") + fmt(Math.abs(v));
+const keyText = key => key.map(k => k || "(unnamed)").join(" › ");
 
+// One row per change: a moved group is one row (its parts only inherit), an added
+// or removed group is one row (its parts are inside it).
+function changeRows() {
+  const rows = [];
+  for (const [id, st] of Object.entries(diff.status)) {
+    if (!st.class || st.inherited) continue;
+    const parent = byId.get(id).parent;
+    if (st.class === "added" && parent && statusOf(parent).class === "added") continue;
+    rows.push({ id, kind: st.class, kinds: st.class === "added" ? ["added"] : st.tags, key: st.new_key, st });
+  }
+  for (const [oldId, st] of Object.entries(diff.old_status)) {
+    if (st.class !== "removed") continue;
+    const parentKey = st.old_key.slice(0, -1);
+    const parent = Object.values(diff.old_status).find(s => s.old_key.length === parentKey.length && s.old_key.every((k, i) => k === parentKey[i]));
+    if (parent && parent.class === "removed") continue;
+    rows.push({ id: "old:" + oldId, kind: "removed", kinds: ["removed"], key: st.old_key, st });
+  }
+  rows.sort((a, b) => KINDS.indexOf(a.kind) - KINDS.indexOf(b.kind) || keyText(a.key).localeCompare(keyText(b.key)));
+  return rows;
+}
+function deltaText(row) {
+  const d = row.st.delta || {}, out = [];
+  if ("distance" in d) out.push(`${fmt(d.distance)} mm`);
+  if ("angle" in d) out.push(`${fmt(d.angle)}°`);
+  if ("volume" in d) out.push(`${signed(d.volume)} mm³`);
+  if (!out.length && row.kinds.includes("renamed") && row.st.old_key) out.push(`was ${row.st.old_key.at(-1) || "(unnamed)"}`);
+  if (!out.length && row.kinds.includes("re-parented") && row.st.old_key) out.push(`from ${keyText(row.st.old_key.slice(0, -1))}`);
+  return out.join(", ");
+}
+let filter = null;                            // a kind, when a chip is active
+function buildChangeList() {
+  const rows = changeRows();
+  const list = $("changes");
+  list.textContent = "";
+  let kind = null;
+  for (const row of rows) {
+    if (filter && !row.kinds.includes(filter)) continue;
+    if (row.kind !== kind) {
+      kind = row.kind;
+      const h = document.createElement("h3");
+      h.textContent = kind;
+      list.append(h);
+    }
+    const el = document.createElement("div");
+    el.className = "change" + (row.id === selected ? " selected" : "");
+    el.dataset.id = row.id;
+    const text = document.createElement("span");
+    text.append(row.key.at(-1) || "(unnamed)");
+    const where = document.createElement("span");
+    where.className = "where";
+    where.textContent = keyText(row.key.slice(0, -1));
+    text.append(where);
+    const delta = document.createElement("span");
+    delta.className = "delta";
+    delta.textContent = deltaText(row);
+    el.append(dotFor(row.kind === "renamed" ? "#ccc" : COLOURS[row.kind]), text, delta);
+    el.onclick = () => goTo(row.id);
+    list.append(el);
+  }
+  if (!list.childElementCount) {
+    const p = document.createElement("p");
+    p.className = "dim";
+    p.textContent = rows.length ? "no changes of this kind" : "no changes";
+    list.append(p);
+  }
+}
+// Select the change and fly to it; in a mode where it does not exist (an added
+// part in Version 1, a removed one in Version 2) show Changes first.
+async function goTo(id) {
+  let target = counterpart(id, mode);
+  if (!target || !boxOf(target)) {
+    await setMode("changes");
+    target = id;
+  }
+  select(target);
+  flyTo(boxOf(target));
+}
+if (diff) {
+  const chips = $("chips");
+  for (const kind of KINDS) {
+    const n = diff.summary[kind];
+    if (!n) continue;
+    const chip = document.createElement("button");
+    chip.className = "chip";
+    chip.dataset.kind = kind;
+    chip.append(dotFor(kind === "renamed" ? "#ccc" : COLOURS[kind]), `${kind} ${n}`);
+    chip.onclick = () => {
+      filter = filter === kind ? null : kind;
+      for (const c of chips.children) c.classList.toggle("on", c.dataset.kind === filter);
+      buildChangeList();
+      showTab("changes");
+    };
+    chips.append(chip);
+  }
+  if (!chips.childElementCount) chips.textContent = "no change";
+  buildChangeList();
+}
+
+// ---- tree (Parts tab) -----------------------------------------------------
 function buildTree(parentId) {
   const ul = document.createElement("ul");
   for (const node of childrenOf(parentId)) {
@@ -310,14 +587,17 @@ function buildTree(parentId) {
       row.append(extra);
     }
     for (const badge of tagsFor(node)) row.append(badge);
-    row.onclick = () => select(node.id === selected ? null : node.id);
+    row.onclick = () => {
+      if (mode === "v1") { goTo(node.id); return; }   // its Version 1 self, or Changes if it has none
+      select(node.id === selected ? null : node.id);
+    };
     li.append(row);
     if (kids.length) li.append(buildTree(node.id));
     ul.append(li);
   }
   return ul;
 }
-document.getElementById("treeRoot").append(buildTree(null));
+$("treeRoot").append(buildTree(null));
 
 // Tree badges: a part's own tags (or the class it inherited from a moved group);
 // a group's own tags plus the strongest class among its children.
@@ -342,7 +622,7 @@ function tagsFor(node) {
 
 // Removed parts (ghosts) get their own list under the tree, by key.
 if (diff && diff.ghosts.length) {
-  const box = document.getElementById("removed");
+  const box = $("removed");
   const h = document.createElement("h3");
   h.textContent = `Removed (${diff.ghosts.length})`;
   box.append(h);
@@ -351,8 +631,8 @@ if (diff && diff.ghosts.length) {
     const li = document.createElement("li");
     const row = document.createElement("div");
     row.dataset.id = "old:" + g.old_id;
-    row.textContent = g.key.map(k => k || "(unnamed)").join(" › ");
-    row.onclick = () => select(row.dataset.id === selected ? null : row.dataset.id);
+    row.textContent = keyText(g.key);
+    row.onclick = () => (row.dataset.id === selected ? select(null) : goTo(row.dataset.id));
     li.append(row);
     ul.append(li);
   }
@@ -360,12 +640,13 @@ if (diff && diff.ghosts.length) {
 }
 
 function revealInTree(id) {
-  const row = document.querySelector(`#tree li > div[data-id="${id}"]`);
+  const row = document.querySelector(`#parts li > div[data-id="${id}"]`);
+  if (!row) return;
   for (let li = row.parentElement; li; li = li.parentElement.closest("li")) {
     li.classList.remove("collapsed");
     li.querySelector(":scope > div > .toggle").textContent = childrenOf(li.querySelector(":scope > div").dataset.id).length ? "▾" : "";
   }
-  row.scrollIntoView({ block: "nearest" });
+  if (!$("parts").classList.contains("hidden")) row.scrollIntoView({ block: "nearest" });
 }
 
 // ---- info panel -----------------------------------------------------------
@@ -375,37 +656,42 @@ function esc(text) {
 }
 
 function showInfo(id) {
-  const info = document.getElementById("info");
+  const info = $("info");
   if (!id) {
-    info.innerHTML = `<h2>Nothing selected</h2><p class="dim">${model.nodes.length} nodes, ${Object.keys(model.shapes).length} unique shapes</p>`;
+    const hint = diff ? "Click a change in the list, or a part in the 3D view." : "Click a part in the 3D view or in the tree.";
+    info.innerHTML = `<h2>Nothing selected</h2><p class="dim">${hint}<br>${model.nodes.length} nodes, ${Object.keys(model.shapes).length} unique shapes.<br>Keys: 1 / 2 / 3 modes, F frame, Esc clear.</p>`;
     return;
   }
-  if (typeof id === "string" && id.startsWith("old:")) { showGhostInfo(id.slice(4)); return; }
-  const node = byId.get(id);
+  const isOld = id.startsWith("old:");
+  if (isOld && !oldModel) { showGhostInfo(id.slice(4)); return; }   // Version 1 not fetched yet
+  const [node, shapes, st, side] = isOld
+    ? [oldById.get(id.slice(4)), oldModel.shapes, oldStatusOf(id.slice(4)), "old"]
+    : [byId.get(id), model.shapes, statusOf(id), "new"];
   const rows = [["path", node.path.map(p => esc(p) || "(unnamed)").join(" › ")]];
-  rows.push(...changeRows(id));
+  rows.push(...changeRowsFor(st, side));
   if (node.shape) {
-    const s = model.shapes[node.shape];
+    const s = shapes[node.shape];
     const faces = Object.entries(s.faces).filter(([, n]) => n).map(([k, n]) => `${k} ${n}`).join(", ");
     rows.push(
-      ["shape", `${esc(s.name) || "(unnamed)"} <span class="dim">(${node.shape}, ${s.copies} ${s.copies === 1 ? "copy" : "copies"})</span>`],
+      ["shape", `${esc(s.name) || "(unnamed)"} <span class="dim">(${esc(node.shape)}, ${s.copies} ${s.copies === 1 ? "copy" : "copies"})</span>`],
       ["size", s.size.map(v => fmt(v)).join(" × ") + " mm"],
       ["volume", fmt(s.volume) + " mm³"],
       ["area", fmt(s.area) + " mm²"],
       ["faces", faces],
       ["colour", node.color ? `<span style="color:${esc(node.color)}">■</span> ${esc(node.color)}` : "none"],
-      ["fingerprint", `<code>${s.fingerprint}</code>`],
+      ["fingerprint", `<code>${esc(s.fingerprint)}</code>`],
     );
   } else {
-    rows.push(["group", `${descendants(id).length - 1} nodes inside`]);
+    const inside = isOld ? oldDescendants(id.slice(4)).length - 1 : descendants(id).length - 1;
+    rows.push(["group", `${inside} nodes inside`]);
   }
   const pos = node.world.slice(12, 15).map(v => fmt(v)).join(", ");
   rows.push(["position", `(${pos}) mm`]);
-  info.innerHTML = `<h2>${esc(node.name) || "(unnamed)"}</h2><table>` +
+  const version = diff ? ` <span class="dim">${isOld ? "version 1" : "version 2"}</span>` : "";
+  info.innerHTML = `<h2>${esc(node.name) || "(unnamed)"}${version}</h2><table>` +
     rows.map(([k, v]) => `<tr><td>${k}</td><td>${v}</td></tr>`).join("") + "</table>";
 }
-function changeRows(id) {
-  const st = statusOf(id);
+function changeRowsFor(st, side) {
   if (!st || !st.class) return [];
   const rows = [];
   let what = esc(st.class) + (st.inherited ? " <span class=\"dim\">(with its group)</span>" : "");
@@ -415,10 +701,11 @@ function changeRows(id) {
   const parts = [];
   if ("distance" in d) parts.push(`moved ${fmt(d.distance)} mm`);
   if ("angle" in d) parts.push(`turned ${fmt(d.angle)}°`);
-  if ("volume" in d) parts.push(`volume ${d.volume >= 0 ? "+" : ""}${fmt(d.volume)} mm³`);
+  if ("volume" in d) parts.push(`volume ${signed(d.volume)} mm³`);
   if (parts.length) rows.push(["delta", parts.join(", ")]);
   if (st.old_key && st.new_key && st.old_key.join("/") !== st.new_key.join("/")) {
-    rows.push(["was", st.old_key.map(k => esc(k) || "(unnamed)").join(" › ")]);
+    const other = side === "new" ? st.old_key : st.new_key;
+    rows.push([side === "new" ? "was" : "now", other.map(k => esc(k) || "(unnamed)").join(" › ")]);
   }
   if (st.detail) rows.push(["detail", detailText(st.detail)]);
   return rows;
@@ -434,14 +721,21 @@ function detailText(detail) {
     return lines.join("<br>");
   }
   if ("volume_change_mm3" in detail) {           // "could not compute" / "not a solid"
-    return `${esc(detail.state)}; volume change ${detail.volume_change_mm3 >= 0 ? "+" : ""}${fmt(detail.volume_change_mm3)} mm³`;
+    return `${esc(detail.state)}; volume change ${signed(detail.volume_change_mm3)} mm³`;
   }
   return `<span class="dim">${esc(detail.state)}</span>`;   // the command to run
 }
 
 function showGhostInfo(oldId) {
   const g = diff.ghosts.find(x => x.old_id === oldId);
-  const info = document.getElementById("info");
+  const st = oldStatusOf(oldId);
+  const info = $("info");
+  if (!g) {                                     // a removed group: its parts are the ghosts
+    info.innerHTML = `<h2>${esc(st.old_key.at(-1)) || "(unnamed)"} <span class="dim">version 1</span></h2><table>` +
+      `<tr><td>change</td><td>removed</td></tr><tr><td>was at</td><td>${st.old_key.map(k => esc(k) || "(unnamed)").join(" › ")}</td></tr>` +
+      `<tr><td>group</td><td>${oldDescendants(oldId).length - 1} nodes inside</td></tr></table>`;
+    return;
+  }
   const rows = [
     ["change", "removed"],
     ["was at", g.key.map(k => esc(k) || "(unnamed)").join(" › ")],
@@ -449,7 +743,7 @@ function showGhostInfo(oldId) {
     ["volume", fmt(g.volume) + " mm³"],
     ["position", `(${g.world.slice(12, 15).map(v => fmt(v)).join(", ")}) mm`],
   ];
-  info.innerHTML = `<h2>${esc(g.name) || "(unnamed)"}</h2><table>` +
+  info.innerHTML = `<h2>${esc(g.name) || "(unnamed)"} <span class="dim">version 1</span></h2><table>` +
     rows.map(([k, v]) => `<tr><td>${k}</td><td>${v}</td></tr>`).join("") + "</table>";
 }
 

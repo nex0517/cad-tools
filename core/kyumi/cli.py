@@ -9,7 +9,7 @@ from pathlib import Path
 from kyumi.model import Model, Node
 from kyumi.package import import_step, load
 from kyumi.reader import UnreadableFile
-from kyumi.viewer import DiffView, serve
+from kyumi.viewer import DiffView, mesh_paths, serve
 
 try:
     import kyumi_diff
@@ -97,7 +97,7 @@ def diff_view(old_model: Model, new_model: Model, detail_dir: Path | None) -> Di
     if detail_dir is not None:
         entries, files = kyumi_diff.load_details(detail_dir, old_model, new_model, result)
     changes = kyumi_diff.changes_json(old_model, new_model, result, entries, detail_dir)
-    return DiffView(changes, old_model, kyumi_diff.ghost_meshes(old_model, result), files)
+    return DiffView(changes, old_model, mesh_paths(old_model), files)
 
 
 def run_diff(
