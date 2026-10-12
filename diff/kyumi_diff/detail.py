@@ -53,6 +53,8 @@ class Detail:
     removed: float  # mm³
     volume_change: float  # new - old, from the manifests
     aligned: bool  # the old brep had to be moved onto the new one first
+    old_fingerprint: str  # which exact shapes this came from (view --detail checks)
+    new_fingerprint: str
     added_glb: bytes | None = None
     removed_glb: bytes | None = None
 
@@ -66,6 +68,8 @@ class Detail:
             "removed_mm3": round(self.removed, 3),
             "volume_change_mm3": round(self.volume_change, 3),
             "aligned": self.aligned,
+            "old_fingerprint": self.old_fingerprint,
+            "new_fingerprint": self.new_fingerprint,
             "frame": FRAME,
             "files": files,
         }
@@ -235,7 +239,18 @@ def detail(old: Model, new: Model, result: Diff, key: Key) -> Detail:
     o_shape, n_shape = old.shapes[old.node(o_id).shape], new.shapes[new.node(n_id).shape]
     old_brep, new_brep = read_brep(old, o_shape), read_brep(new, n_shape)
     volume_change = n_shape.volume - o_shape.volume
-    found = Detail(key, o_id, n_id, FAILED, 0.0, 0.0, volume_change, False)
+    found = Detail(
+        key,
+        o_id,
+        n_id,
+        FAILED,
+        0.0,
+        0.0,
+        volume_change,
+        False,
+        o_shape.fingerprint,
+        n_shape.fingerprint,
+    )
     if solids(old_brep) == 0 or solids(new_brep) == 0:
         found.status = NOT_SOLID
         return found
@@ -295,13 +310,16 @@ def detail_all(old: Model, new: Model, result: Diff, out_dir: Path) -> Path:
     for the viewer. Writes `details.json` and `<new_id>.added.glb` /
     `<new_id>.removed.glb` into `out_dir` and returns the json path. A failed
     boolean is one "could not compute" entry; missing breps stop before anything
-    is written."""
+    is written. The previous run's `details.json` goes first, so an interrupted
+    run leaves no index rather than a stale one."""
     changes = [c for c in result.changes if "modified" in c.tags]
     for change in changes:  # fail early, before touching out_dir
         for model, node_id in ((old, change.old_id), (new, change.new_id)):
             if model.shapes[model.node(node_id).shape].brep is None:
                 read_brep(model, model.shapes[model.node(node_id).shape])
     out_dir.mkdir(parents=True, exist_ok=True)
+    json_path = out_dir / "details.json"
+    json_path.unlink(missing_ok=True)
     for stale in out_dir.glob("*.glb"):
         stale.unlink()
     parts = []
@@ -312,7 +330,6 @@ def detail_all(old: Model, new: Model, result: Diff, out_dir: Path) -> Path:
         files, _ = write_meshes(found, out_dir, prefix=f"{found.new_id}.")
         parts.append({**found.to_dict(files), "seconds": round(seconds, 2)})
         print(f"detail  {' › '.join(found.key)}: {found.status} ({seconds:.1f} s)")
-    json_path = out_dir / "details.json"
     data = {"old": package_name(old), "new": package_name(new), "parts": parts}
     json_path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
     print(f"wrote {json_path} ({len(parts)} modified {'part' if len(parts) == 1 else 'parts'})")

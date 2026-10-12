@@ -262,20 +262,27 @@ Exact detail is never computed on click (one CPT17 shape takes 27 s, section
 3). `kyumi diff OLD NEW --detail-all [--out-dir DIR]` runs `detail()` for every
 `modified` part ahead and writes `DIR/details.json` plus
 `<new_id>.added.glb` / `<new_id>.removed.glb` (an empty side is `null` and has
-no file; stale `*.glb` in DIR are deleted first):
+no file; the previous run's `details.json` and `*.glb` in DIR are deleted first,
+so an interrupted run leaves no index rather than a stale one):
 
 ```json
 {"old": "v1.kyumi", "new": "hole.kyumi",
  "parts": [{"key": ["Drone", "Frame", "CenterPlate"], "old_id": "n2", "new_id": "n2",
             "status": "ok", "added_mm3": 0.0, "removed_mm3": 37.699, "volume_change_mm3": -37.699,
-            "aligned": false, "frame": "the new part's own coordinates; ...",
+            "aligned": false, "old_fingerprint": "6f1e…", "new_fingerprint": "a93c…",
+            "frame": "the new part's own coordinates; ...",
             "files": {"added": null, "removed": "n2.removed.glb"}, "seconds": 0.02}]}
 ```
 
 At start-up `kyumi view --detail DIR` checks every entry against its own diff
-(a `modified` change with the same key and ids, `volume_change_mm3` = new minus
-old shape volume within 0.001, files exactly `<new_id>.<side>.glb` and present)
-and refuses to start otherwise ("DIR was made from other packages"); the
+(a `modified` change with the same key and ids, both shapes' fingerprints equal
+to the entry's `old_fingerprint` / `new_fingerprint`, `volume_change_mm3` = new
+minus old shape volume within 0.001, files exactly `<new_id>.<side>.glb` and
+present) and refuses to start otherwise ("DIR was made from other packages").
+Key, ids and volume alone cannot tell a hole that was moved from the hole that
+was drilled; the fingerprints can. A `modified` part the folder does not list
+is shown as "not computed" with the command to run, not refused: every entry
+that is present has been verified, so nothing wrong is ever shown. The
 server builds file names itself and serves `/detail/<new_id>/<side>.glb` from
 memory, only for verified non-null sides. Everything else is 404 and the Host
 check covers every route. Clicking a modified part with detail loaded makes it

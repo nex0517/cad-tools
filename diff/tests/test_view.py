@@ -17,6 +17,7 @@ from kyumi import Model, import_step, load
 from kyumi.cli import diff_view, main
 from kyumi.viewer import make_handler
 from kyumi_diff import changes_json, detail_all, diff, load_details
+from kyumi_diff.classify import Change
 from kyumi_diff.index import Index
 from make_diff_pairs import make_pairs
 from test_kyumi_diff import imported, packaged, tiled
@@ -94,6 +95,37 @@ def test_detail_all_without_breps_writes_nothing(packages: dict[str, Path], tmp_
     with pytest.raises(SystemExit, match="re-import it without --no-breps"):
         main(["diff", *args])
     assert not out.exists()
+
+
+def test_an_interrupted_rerun_leaves_no_details_json(
+    packages: dict[str, Path], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    out = tmp_path / "interrupted"
+    old, new = load(packages["v1"]), load(packages["hole"])
+    result = diff(old, new)
+    detail_all(old, new, result, out)
+    assert (out / "details.json").is_file()
+
+    # a second "modified" part, so the run can die between the first and the second
+    result.changes.append(
+        Change(["Drone", "Battery"], ["Drone", "Battery"], ["modified"], {}, "n35", "n35")
+    )
+    calls: list[tuple] = []
+    real_detail = detail_module.detail
+
+    def dies_after_the_first(*args):
+        calls.append(args)
+        if len(calls) > 1:
+            raise RuntimeError("laptop closed")
+        return real_detail(*args)
+
+    monkeypatch.setattr(detail_module, "detail", dies_after_the_first)
+    with pytest.raises(RuntimeError, match="laptop closed"):
+        detail_all(old, new, result, out)
+    assert list(out.glob("*.glb")) == [out / "n2.removed.glb"]  # the first part was written
+    assert not (out / "details.json").exists()
+    with pytest.raises(ValueError, match="has no details.json"):
+        diff_view(old, new, out)
 
 
 def test_a_rerun_removes_stale_meshes(packages: dict[str, Path], tmp_path: Path) -> None:
@@ -310,6 +342,16 @@ def test_detail_folder_is_checked_against_this_diff(
     (edited / "x.glb").write_bytes(b"not ours")
     with pytest.raises(ValueError, match="made from other packages"):
         load_details(edited, old, new, diff(old, new))
+
+    # the same ids, key and volume change, but another edit (a hole moved, not resized)
+    other_edit = tmp_path / "other_edit"
+    other_edit.mkdir()
+    data = details_in(hole_detail)
+    data["parts"][0]["new_fingerprint"] = "0000deadbeef"
+    (other_edit / "details.json").write_text(json.dumps(data), encoding="utf-8")
+    (other_edit / entry["files"]["removed"]).write_bytes(b"the hole somewhere else")
+    with pytest.raises(ValueError, match="made from other packages"):
+        load_details(other_edit, old, new, diff(old, new))
 
 
 def test_a_modified_part_without_detail_shows_the_command(packages: dict[str, Path]) -> None:

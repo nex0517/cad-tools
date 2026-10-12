@@ -183,8 +183,9 @@ def load_details(
     detail_dir: Path, old: Model, new: Model, result: Diff
 ) -> tuple[dict[str, dict], DetailFiles]:
     """Read and check a `--detail-all` folder against this very diff. Every entry
-    must name a change tagged `modified` (same key, same ids), its volume change
-    must be the two shape volumes' difference, and its files must be exactly
+    must name a change tagged `modified` (same key, same ids, both fingerprints),
+    its volume change must be the two shape volumes' difference, and its files
+    must be exactly
     `<new_id>.<side>.glb` (or null) and exist. Anything else: refuse to start."""
     json_path = detail_dir / "details.json"
     if not json_path.is_file():
@@ -198,8 +199,12 @@ def load_details(
         change = modified.get(str(entry.get("new_id")))
         if change is None or list(change.new) != entry["key"] or change.old_id != entry["old_id"]:
             raise mismatch(detail_dir, key, old, new)
-        expected = new.shapes[new.node(change.new_id).shape].volume
-        expected -= old.shapes[old.node(change.old_id).shape].volume
+        o_shape = old.shapes[old.node(change.old_id).shape]
+        n_shape = new.shapes[new.node(change.new_id).shape]
+        fingerprints = (entry.get("old_fingerprint"), entry.get("new_fingerprint"))
+        if fingerprints != (o_shape.fingerprint, n_shape.fingerprint):
+            raise mismatch(detail_dir, key, old, new)  # same ids, other geometry
+        expected = n_shape.volume - o_shape.volume
         if abs(entry["volume_change_mm3"] - expected) > VOLUME_TOLERANCE + 1e-9:
             raise mismatch(detail_dir, key, old, new)
         sides: dict[str, bytes | None] = {}
