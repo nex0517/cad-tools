@@ -111,7 +111,7 @@ def test_an_interrupted_rerun_leaves_no_details_json(
         Change(["Drone", "Battery"], ["Drone", "Battery"], ["modified"], {}, "n35", "n35")
     )
     calls: list[tuple] = []
-    real_detail = detail_module.detail
+    real_detail = detail_module.detail_pair
 
     def dies_after_the_first(*args):
         calls.append(args)
@@ -119,7 +119,7 @@ def test_an_interrupted_rerun_leaves_no_details_json(
             raise RuntimeError("laptop closed")
         return real_detail(*args)
 
-    monkeypatch.setattr(detail_module, "detail", dies_after_the_first)
+    monkeypatch.setattr(detail_module, "detail_pair", dies_after_the_first)
     with pytest.raises(RuntimeError, match="laptop closed"):
         detail_all(old, new, result, out)
     assert list(out.glob("*.glb")) == [out / "n2.removed.glb"]  # the first part was written

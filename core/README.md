@@ -70,7 +70,7 @@ for node in model.nodes:
 | `kyumi/viewer.py`  | `kyumi view`: serves `viewer.html`, `/model.json` and the meshes from the zip |
 | `kyumi/viewer.html`| the page: three.js from a CDN, orbit, click-to-select, tree panel. No build step |
 | `kyumi/cli.py`     | the `kyumi` command |
-| `real_files.py`    | `python core/real_files.py`: imports every STEP in `fixtures/real/` (not committed) and writes `docs/real-files.md` |
+| `real_files.py`    | `python core/real_files.py`: imports every STEP in `fixtures/real/` (not committed) and writes `fixtures/real/real-files.md` (gitignored; pasted into `docs/real-files.md`) |
 
 ## Tests
 

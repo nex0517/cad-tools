@@ -235,7 +235,14 @@ def transformed(shape: TopoDS_Shape, matrix: np.ndarray) -> TopoDS_Shape:
 
 
 def detail(old: Model, new: Model, result: Diff, key: Key) -> Detail:
+    """`--detail KEY`: the pair is looked up by its key."""
     o_id, n_id = find_pair(old, new, result, key)
+    return detail_pair(old, new, o_id, n_id, key)
+
+
+def detail_pair(old: Model, new: Model, o_id: str, n_id: str, key: Key) -> Detail:
+    """The detail of one matched pair, by ids (keys can collide: a part literally
+    named `Screw#1` beside two `Screw` siblings)."""
     o_shape, n_shape = old.shapes[old.node(o_id).shape], new.shapes[new.node(n_id).shape]
     old_brep, new_brep = read_brep(old, o_shape), read_brep(new, n_shape)
     volume_change = n_shape.volume - o_shape.volume
@@ -325,7 +332,7 @@ def detail_all(old: Model, new: Model, result: Diff, out_dir: Path) -> Path:
     parts = []
     for change in changes:
         start = time.perf_counter()
-        found = detail(old, new, result, change.new)
+        found = detail_pair(old, new, change.old_id, change.new_id, change.new)
         seconds = time.perf_counter() - start
         files, _ = write_meshes(found, out_dir, prefix=f"{found.new_id}.")
         parts.append({**found.to_dict(files), "seconds": round(seconds, 2)})

@@ -1,5 +1,7 @@
 """Run the importer over the real STEP files in fixtures/real/ and write
-docs/real-files.md with what happened to each.
+fixtures/real/real-files.md with what happened to each. That folder is gitignored,
+so a run never dirties the checkout; the report is pasted into docs/real-files.md
+by hand (the real files live on one laptop, the branch is committed elsewhere).
 
 Those files are not committed (their licences do not allow it), so this report
 is how we track whether core copes with real-world exports. The v1/v2 pairs in
@@ -35,7 +37,7 @@ from kyumi_diff.detail import FAILED, NOT_SOLID, OK, compare, is_empty, read_bre
 ROOT = Path(__file__).resolve().parents[1]
 REAL = ROOT / "fixtures" / "real"
 PAIRS = REAL / "pairs"
-REPORT = ROOT / "docs" / "real-files.md"
+REPORT = REAL / "real-files.md"  # gitignored; copied into docs/real-files.md by hand
 
 
 COLUMNS = (
@@ -233,7 +235,10 @@ def main() -> None:
                 lines += pair_lines(pair_dir, Path(tmp), viewer_rows)
         lines += ["", "## Viewer", "", f"| {VIEWER_COLUMNS} |", "|---" * 4 + "|", *viewer_rows]
     REPORT.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    print(f"wrote {REPORT.relative_to(ROOT)} ({len(steps)} files, {len(pair_dirs)} pair sets)")
+    print(
+        f"wrote {REPORT.relative_to(ROOT)} ({len(steps)} files, {len(pair_dirs)} pair sets); "
+        "paste it into docs/real-files.md"
+    )
 
 
 if __name__ == "__main__":
