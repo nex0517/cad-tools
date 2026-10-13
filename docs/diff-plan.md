@@ -238,11 +238,13 @@ imports it) and the page only paints `/changes.json`:
   "summary": {"added": 0, "removed": 0, "moved": 1, "renamed": 0, "modified": 0, "re-parented": 0},
   "status": {"n18": {"class": "moved", "tags": ["moved"], "delta": {"distance": 5.0},
                      "inherited": false, "old_key": ["Drone", "Propulsion", "Motor_FR"],
-                     "new_key": ["Drone", "Propulsion", "Motor_FR"], "old_id": "n18"},
+                     "new_key": ["Drone", "Propulsion", "Motor_FR"], "parent": "n16",
+                     "old_id": "n18"},
              "n2":  {"class": "moved", "tags": [], "delta": {}, "inherited": true, "...": "..."}},
   "old_status": {"n18": {"class": "moved", "...": "...", "new_id": "n18"},
                  "n9": {"class": "removed", "tags": [], "delta": {}, "inherited": false,
-                        "old_key": ["Drone", "Frame", "Screw_3"], "new_key": null, "new_id": null}},
+                        "old_key": ["Drone", "Frame", "Screw_3"], "new_key": null,
+                        "parent": "n1", "new_id": null}},
   "ghosts": [{"old_id": "n9", "key": ["Drone", "Frame", "Screw_3"], "name": "Screw_3",
               "mesh": "/old/meshes/s3.glb", "world": [16 numbers, column-major], "volume": 1.2, "size": [3]}],
   "moves": [{"new_id": "n18", "old_id": "n18", "from": [x, y, z], "to": [x, y, z], "distance": 5.0}]
@@ -258,7 +260,9 @@ the **old** tree and keyed by **old** ids (`removed` instead of `added`, moves
 inherited the same way, so rotating `Frame` colours all of it in both
 versions); each entry names its partner in the other version (`old_id` /
 `new_id`, `null` when there is none), which is how a selection survives a mode
-switch. Old and new ids collide, so the page keeps them in separate maps
+switch, and its `parent` id in its own version, so the page walks the old tree
+(a removed group's ghosts) by id before `/old/model.json` is fetched, never by
+key (keys can collide). Old and new ids collide, so the page keeps them in separate maps
 (`old:<id>`) and old files live only under `/old/`: `/old/model.json` and
 `/old/meshes/<id>.glb`, both in diff mode only. A moved group's centre is the
 mean of its parts' centres.

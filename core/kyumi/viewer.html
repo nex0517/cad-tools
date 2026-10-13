@@ -20,7 +20,6 @@
   #modes button:first-child { border-radius: 4px 0 0 4px; }
   #modes button:last-child { border-radius: 0 4px 4px 0; }
   #modes button + button { border-left: none; }
-  #modes kbd { color: #888; font: inherit; margin-left: 4px; }
   #top label { color: #aaa; cursor: pointer; white-space: nowrap; }
   #ready { margin-left: auto; color: #888; white-space: nowrap; }
   #loading { color: #f5a623; white-space: nowrap; }
@@ -74,9 +73,9 @@
   <span id="files">loading…</span>
   <span id="chips"></span>
   <span id="modes" class="hidden">
-    <button data-mode="v1">Version 1<kbd>1</kbd></button>
-    <button data-mode="v2">Version 2<kbd>2</kbd></button>
-    <button data-mode="changes">Changes<kbd>3</kbd></button>
+    <button data-mode="v1" title="key 1">Version 1</button>
+    <button data-mode="v2" title="key 2">Version 2</button>
+    <button data-mode="changes" title="key 3">Changes</button>
   </span>
   <label id="unchangedLine" class="hidden"><input type="checkbox" id="unchanged"> show unchanged in their own colours</label>
   <span id="loading"></span>
@@ -211,7 +210,6 @@ if (diff) {
 // chosen, so the page is ready as fast as with one package.
 let oldModel = null;                          // /old/model.json, once loaded
 const oldById = new Map();                    // old id -> old node
-const oldChildrenOf = oldId => (oldModel ? oldModel.nodes.filter(n => n.parent === oldId) : []);
 const oldMeshes = new Map();                  // "old:<id>" -> THREE.Mesh (hidden unless mode is v1)
 let oldLoading = null;                        // the promise, so two quick presses load once
 function ensureOld() {
@@ -301,15 +299,19 @@ function applyMode() {
   for (const mesh of oldMeshes.values()) mesh.visible = v1;
   for (const mesh of ghosts.values()) mesh.visible = mode === "changes";
   for (const line of moveLines) line.visible = mode === "changes";
-  for (const mesh of detailMeshes) mesh.visible = !v1;
+  for (const mesh of detailMeshes) mesh.visible = mode === "changes";
   for (const b of document.querySelectorAll("#modes button")) b.classList.toggle("on", b.dataset.mode === mode);
 }
 
 // The selected part follows the switch when it exists on the other side; the
-// camera stays where it is.
+// camera stays where it is. The last key pressed wins: pressing 1 then 2 while
+// Version 1 is still loading ends in Version 2.
+let wanted = mode;
 async function setMode(next) {
-  if (!diff || next === mode) return;
+  if (!diff) return;
+  wanted = next;
   if (next === "v1") await ensureOld();
+  if (next !== wanted || next === mode) return;
   const was = selected;
   mode = next;
   applyMode();
@@ -384,13 +386,21 @@ function descendants(id) {
   for (const child of childrenOf(id)) out.push(...descendants(child.id));
   return out;
 }
-// Old descendants come from old_status keys (every old node has one), so a removed
-// group's ghosts can be found before /old/model.json has been fetched.
+// Old descendants come from old_status parent ids (every old node has an entry), so
+// a removed group's ghosts can be found before /old/model.json has been fetched.
+// By id, never by key: a literal "Screw#1" and the second "Screw" share a key.
+const oldChildIds = new Map();                // old id -> its children's old ids
+if (diff) {
+  for (const [id, s] of Object.entries(diff.old_status)) {
+    if (s.parent === null) continue;
+    if (!oldChildIds.has(s.parent)) oldChildIds.set(s.parent, []);
+    oldChildIds.get(s.parent).push(id);
+  }
+}
 function oldDescendants(oldId) {
-  const prefix = oldStatusOf(oldId).old_key;
-  return Object.entries(diff.old_status)
-    .filter(([, s]) => s.old_key.length >= prefix.length && prefix.every((k, i) => s.old_key[i] === k))
-    .map(([id]) => "old:" + id);
+  const out = ["old:" + oldId];
+  for (const child of oldChildIds.get(oldId) || []) out.push(...oldDescendants(child));
+  return out;
 }
 
 function select(id, reveal = true) {
@@ -404,14 +414,15 @@ function select(id, reveal = true) {
   for (const [nodeId, mesh] of meshes) { glow(mesh, lit.has(nodeId), 0.2); mesh.material.opacity = 1; }
   for (const [oldId, mesh] of oldMeshes) glow(mesh, lit.has(oldId), 0.2);
   for (const [ghostId, mesh] of ghosts) glow(mesh, lit.has(ghostId), 0.5);
-  const treeId = isOld ? oldStatusOf(id.slice(4)).new_id || null : id;  // the tree lists new ids
-  for (const row of document.querySelectorAll("#parts li > div")) {
+  // The tree and the change list name parts by new id (removed ones by "old:<id>"),
+  // so an old selection in Version 1 lights the row of its matched new id.
+  const treeId = isOld ? oldStatusOf(id.slice(4)).new_id || null : id;
+  for (const row of document.querySelectorAll("#parts li > div, .change")) {
     row.classList.toggle("selected", row.dataset.id === id || row.dataset.id === treeId);
   }
-  for (const row of document.querySelectorAll(".change")) row.classList.toggle("selected", row.dataset.id === id);
   for (const mesh of detailMeshes.splice(0)) scene.remove(mesh);
   if (id && !isOld && reveal) revealInTree(id);
-  if (id && !isOld) showDetail(id);
+  if (id && !isOld && mode === "changes") showDetail(id);   // detail belongs to Changes only
   showInfo(id);
 }
 
@@ -441,7 +452,7 @@ async function showDetail(id) {
     const mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: colour, metalness: 0.1, roughness: 0.5 }));
     mesh.matrixAutoUpdate = false;
     mesh.matrix.fromArray(node.world);
-    mesh.visible = mode !== "v1";
+    mesh.visible = mode === "changes";
     scene.add(mesh);
     detailMeshes.push(mesh);
   }
@@ -468,21 +479,21 @@ function fmt(x, digits = 1) { return Number(x).toFixed(digits); }
 const signed = v => (v < 0 ? "−" : "+") + fmt(Math.abs(v));
 const keyText = key => key.map(k => k || "(unnamed)").join(" › ");
 
-// One row per change: a moved group is one row (its parts only inherit), an added
-// or removed group is one row (its parts are inside it).
+// One row per change. A part that only rides along with its moved group has no row
+// of its own (the group's row covers it), but one with its own change inside that
+// group (renamed) keeps a row under that change. An added or removed group is one
+// row (its parts are inside it). Parents are looked up by id, never by key.
 function changeRows() {
   const rows = [];
   for (const [id, st] of Object.entries(diff.status)) {
-    if (!st.class || st.inherited) continue;
-    const parent = byId.get(id).parent;
-    if (st.class === "added" && parent && statusOf(parent).class === "added") continue;
-    rows.push({ id, kind: st.class, kinds: st.class === "added" ? ["added"] : st.tags, key: st.new_key, st });
+    const kind = st.inherited ? KINDS.find(k => st.tags.includes(k)) : st.class;
+    if (!kind) continue;
+    if (kind === "added" && st.parent !== null && statusOf(st.parent).class === "added") continue;
+    rows.push({ id, kind, kinds: kind === "added" ? ["added"] : st.tags, key: st.new_key, st });
   }
   for (const [oldId, st] of Object.entries(diff.old_status)) {
     if (st.class !== "removed") continue;
-    const parentKey = st.old_key.slice(0, -1);
-    const parent = Object.values(diff.old_status).find(s => s.old_key.length === parentKey.length && s.old_key.every((k, i) => k === parentKey[i]));
-    if (parent && parent.class === "removed") continue;
+    if (st.parent !== null && oldStatusOf(st.parent).class === "removed") continue;
     rows.push({ id: "old:" + oldId, kind: "removed", kinds: ["removed"], key: st.old_key, st });
   }
   rows.sort((a, b) => KINDS.indexOf(a.kind) - KINDS.indexOf(b.kind) || keyText(a.key).localeCompare(keyText(b.key)));
@@ -659,7 +670,8 @@ function showInfo(id) {
   const info = $("info");
   if (!id) {
     const hint = diff ? "Click a change in the list, or a part in the 3D view." : "Click a part in the 3D view or in the tree.";
-    info.innerHTML = `<h2>Nothing selected</h2><p class="dim">${hint}<br>${model.nodes.length} nodes, ${Object.keys(model.shapes).length} unique shapes.<br>Keys: 1 / 2 / 3 modes, F frame, Esc clear.</p>`;
+    const keys = diff ? "Keys: 1 / 2 / 3 modes, F frame, Esc clear." : "Keys: F frame, Esc clear.";
+    info.innerHTML = `<h2>Nothing selected</h2><p class="dim">${hint}<br>${model.nodes.length} nodes, ${Object.keys(model.shapes).length} unique shapes.<br>${keys}</p>`;
     return;
   }
   const isOld = id.startsWith("old:");

@@ -2,8 +2,8 @@
 
 A trial of two features for Kyumi ("GitHub for engineers"): **DIFF** — compare
 two versions of a 3D CAD assembly and say what was added, removed, moved,
-renamed or modified — and **CATEGORIZE** — sort the parts of a model into a
-flowchart-like view. Diff is built and measured on a real 316-part model;
+renamed or modified — and **CATEGORIZE** — sort the parts of a model into
+categories automatically instead of by hand. Diff is built and measured on a real 316-part model;
 categorize is planned ([docs/categorize-plan.md](docs/categorize-plan.md)).
 `core/` (a STEP importer and a small viewer) is scaffolding so there is
 something runnable here: Kyumi has its own loader and viewer, and the diff talks
@@ -13,14 +13,16 @@ to them only through one small API (see [What Kyumi would reuse](#what-kyumi-wou
 
 ## Try it in 5 minutes
 
-You need Python 3.11 and `git`. Everything below runs offline except the
-first `pip install` and the viewer's three.js download.
+You need Python 3.11 or newer (tested on 3.11 and 3.13; check with
+`py --version` on Windows, `python3 --version` on Mac) and `git`. Everything
+below runs offline except the first `pip install` and the viewer's three.js
+download.
 
-Windows (Command Prompt):
+Windows (Command Prompt; if `py` is not found, use `python` instead):
 
 ```bat
 git clone https://github.com/nex0517/cad-tools.git && cd cad-tools
-py -3.11 -m venv .venv && .venv\Scripts\activate
+py -m venv .venv && .venv\Scripts\activate
 pip install -e core -e diff
 kyumi import fixtures\pairs\drone\v1.step -o v1.kyumi
 kyumi import fixtures\pairs\drone\showcase.step -o showcase.kyumi
@@ -32,7 +34,7 @@ Mac / Linux:
 
 ```sh
 git clone https://github.com/nex0517/cad-tools.git && cd cad-tools
-python3.11 -m venv .venv && source .venv/bin/activate
+python3 -m venv .venv && source .venv/bin/activate
 pip install -e core -e diff
 kyumi import fixtures/pairs/drone/v1.step -o v1.kyumi
 kyumi import fixtures/pairs/drone/showcase.step -o showcase.kyumi
@@ -51,7 +53,12 @@ kind: a chip added, a screw removed, a motor moved 5 mm, a motor renamed and a
 4 mm hole drilled through the centre plate. `kyumi diff` should print:
 
 ```
-added 1, removed 1, moved 1, renamed 1, modified 1
+added 1  removed 1  moved 1  renamed 1  modified 1  re-parented 0
+modified  Drone › Frame › CenterPlate  volume -37.7 mm³
+renamed  Drone › Propulsion › Motor_FL  →  Drone › Propulsion › Motor_FrontLeft
+moved  Drone › Propulsion › Motor_FR  by 5.0 mm
+added  Drone › Electronics › FlightController › Chip_Extra
+removed  Drone › Frame › Screw_3
 ```
 
 ## What you're looking at
@@ -68,7 +75,7 @@ added 1, removed 1, moved 1, renamed 1, modified 1
   name, where it sits and the size of the change (`5.0 mm`, `−736.2 mm³`).
   Click a row and the camera flies to the part; click a chip in the top bar to
   filter the list to one kind. The *Parts* tab is the plain assembly tree.
-- **Exact detail.** Select the modified part: it turns see-through and the
+- **Exact detail.** Select the modified part in *Changes*: it turns see-through and the
   material that was removed is drawn in solid red (added material in green),
   computed from the exact B-rep geometry, not from the meshes.
 
@@ -105,10 +112,13 @@ Measured on a 316-part, 335-node assembly (CPT17, not committed; details in
 - Diff of two versions: well under a second (`/changes.json` is built in 0.02 s;
   the end-to-end numbers in the table are dominated by reading the packages).
 - Every generated pair (no change, rename, move, delete, modify) came out
-  exactly as expected; a 4,000-part stress pair diffs in 0.4 s.
+  exactly as expected.
 - Exact detail of a drilled hole: 736.2 mm³ removed, 0.0 added, within 1 % of
   the true volume, in 2.8 s.
 - Viewer page ready in 2.4–3.5 s.
+
+Separately, a synthetic 5,000-part model (the drone tiled 162 times, every tile
+with the same names) diffs in 0.4 s including loading.
 
 ## What Kyumi would reuse
 
@@ -117,7 +127,7 @@ Not the importer or the page. The reusable boundary is:
 - `load()` and the `Model` / `Node` / `Shape` API (`core/kyumi/model.py`): the
   diff reads a model only through it — tree, per-parent transforms, names,
   colours, measurements and the exact geometry — so it can be pointed at Kyumi's
-  own loader. The ten questions that decides are in
+  own loader. What exactly it uses is listed in
   [docs/diff-plan.md](docs/diff-plan.md#what-i-need-from-core).
 - `/changes.json`: every part's status in both versions, ghosts and moves, in
   one JSON the viewer paints without deciding anything.

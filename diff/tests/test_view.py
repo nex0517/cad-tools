@@ -222,6 +222,13 @@ def test_every_old_node_gets_the_class_expected_json_implies(
         assert entry["class"] != "added"
     for entry in payload["status"].values():
         assert entry["class"] != "removed"
+    # Each entry's parent is an id of its own version (the page walks trees by id).
+    assert {i: s["parent"] for i, s in payload["old_status"].items()} == {
+        n.id: n.parent for n in old.nodes
+    }
+    assert {i: s["parent"] for i, s in payload["status"].items()} == {
+        n.id: n.parent for n in new.nodes
+    }
 
 
 def test_rotate_inherits_the_move_on_the_old_side_too(

@@ -126,6 +126,7 @@ def side_status(
             "inherited": inherited,
             f"{this_side}_key": index.key[node.id],
             f"{other_side}_key": getattr(own, other_side) if own else None,
+            "parent": node.parent,  # same id space as this entry: keys can collide, ids can't
             partner_field: partner_of.get(node.id),
         }
         if details is not None and own and "modified" in own.tags and node.shape is not None:
