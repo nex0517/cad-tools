@@ -456,29 +456,54 @@ def pick_largest(doc: TDocStd_Document) -> Key | None:
     return max(drillable, key=lambda p: volume_of(definition_shape(p.label))).key
 
 
+SAME_VOLUME = 1e-3  # relative; closer volumes could round to the same 4-digit fingerprint
+
+
 def pick_showcase(doc: TDocStd_Document) -> dict[str, Key]:
     """Targets for the showcase pair: rename, move, delete, add (a second placement
-    of the smallest part) and drill, on five different parts when the file has
-    enough; an edit without a valid target is left out."""
+    of the smallest part) and drill, on five different parts with five different
+    definitions when the file has enough; an edit without a valid target is left out.
+
+    The matcher pairs parts of the same shape at any distance, so the add never
+    copies a part that could share a fingerprint with the deleted one (the diff
+    would report "the deleted part moved here"), and the drill never takes one that
+    could share a fingerprint with the add.
+    """
     pool = editable_parts(doc)
     picks: dict[str, Key] = {}
+    used: list[TDF_Label] = []  # definitions already picked
+    volumes: dict[str, float] = {}  # edit -> volume of the picked part
+
+    def volume(p: Placement) -> float:
+        return volume_of(definition_shape(p.label))
+
+    def fresh(p: Placement) -> bool:
+        return not any(definition_of(p.label).IsEqual(d) for d in used)
+
+    def unlike(p: Placement, edit: str) -> bool:
+        if edit not in volumes:
+            return True
+        a, b = volume(p), volumes[edit]
+        return abs(a - b) > SAME_VOLUME * max(abs(a), abs(b))
+
+    def take(edit: str, p: Placement) -> None:
+        pool.remove(p)
+        used.append(definition_of(p.label))
+        volumes[edit] = volume(p)
+        picks[edit] = p.key
+
     for edit in ("rename", "move", "delete"):
-        if pool:
-            picks[edit] = pool.pop(0).key
-    added: TDF_Label | None = None
-    if pool:
-        smallest = min(pool, key=lambda p: volume_of(definition_shape(p.label)))
-        pool.remove(smallest)
-        picks["add"], added = smallest.key, definition_of(smallest.label)
+        first = next((p for p in pool if fresh(p)), None)
+        if first is not None:
+            take(edit, first)
+    addable = [p for p in pool if fresh(p) and unlike(p, "delete")]
+    if addable:
+        take("add", min(addable, key=volume))
     # Drilling edits the definition, so every placement of it would get the hole:
     # not a shared one, and not the one the add has just placed a second time.
-    drillable = [
-        p
-        for p in pool
-        if not p.shared_definition and (added is None or not definition_of(p.label).IsEqual(added))
-    ]
+    drillable = [p for p in pool if fresh(p) and not p.shared_definition and unlike(p, "add")]
     if drillable:
-        picks["drill"] = max(drillable, key=lambda p: volume_of(definition_shape(p.label))).key
+        take("drill", max(drillable, key=volume))
     return picks
 
 
