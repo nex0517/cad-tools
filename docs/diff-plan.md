@@ -222,8 +222,8 @@ plus the files it wrote.
 #### Viewer diff mode
 
 `kyumi view OLD.kyumi NEW.kyumi [--detail DIR]` loads both packages, runs the
-matcher itself (under a second even at 5,000 parts) and shows the **new** model
-coloured by change: added green, removed red at 40 % opacity (ghosts: the old
+matcher itself (under a second even at 5,000 parts) and opens in **Changes**
+mode: the **new** model coloured by change: added green, removed red at 40 % opacity (ghosts: the old
 model's meshes at their old world transforms), moved / re-parented blue with a
 thin line from the old centre to the new one, modified orange, renamed in its
 own colour with a tag in the tree; unchanged parts are grey until "show
@@ -238,8 +238,13 @@ imports it) and the page only paints `/changes.json`:
   "summary": {"added": 0, "removed": 0, "moved": 1, "renamed": 0, "modified": 0, "re-parented": 0},
   "status": {"n18": {"class": "moved", "tags": ["moved"], "delta": {"distance": 5.0},
                      "inherited": false, "old_key": ["Drone", "Propulsion", "Motor_FR"],
-                     "new_key": ["Drone", "Propulsion", "Motor_FR"]},
+                     "new_key": ["Drone", "Propulsion", "Motor_FR"], "parent": "n16",
+                     "old_id": "n18"},
              "n2":  {"class": "moved", "tags": [], "delta": {}, "inherited": true, "...": "..."}},
+  "old_status": {"n18": {"class": "moved", "...": "...", "new_id": "n18"},
+                 "n9": {"class": "removed", "tags": [], "delta": {}, "inherited": false,
+                        "old_key": ["Drone", "Frame", "Screw_3"], "new_key": null,
+                        "parent": "n1", "new_id": null}},
   "ghosts": [{"old_id": "n9", "key": ["Drone", "Frame", "Screw_3"], "name": "Screw_3",
               "mesh": "/old/meshes/s3.glb", "world": [16 numbers, column-major], "volume": 1.2, "size": [3]}],
   "moves": [{"new_id": "n18", "old_id": "n18", "from": [x, y, z], "to": [x, y, z], "distance": 5.0}]
@@ -250,10 +255,31 @@ imports it) and the page only paints `/changes.json`:
 `moved` / `re-parented` from its nearest tagged parent group (`inherited:
 true`), so rotating `Frame` colours all thirteen parts; priority is modified >
 moved / re-parented > renamed, groups also carry `children_class`, the
-strongest class inside them. `ghosts` carry **old** ids and are the only old
-things served (`/old/meshes/<id>.glb`, removed parts' shapes only): old and new
-ids collide, so the page keeps them in separate maps (`old:<id>`). A moved
-group's centre is the mean of its parts' centres. Modified parts also get
+strongest class inside them. `old_status` is the same classification run over
+the **old** tree and keyed by **old** ids (`removed` instead of `added`, moves
+inherited the same way, so rotating `Frame` colours all of it in both
+versions); each entry names its partner in the other version (`old_id` /
+`new_id`, `null` when there is none), which is how a selection survives a mode
+switch, and its `parent` id in its own version, so the page walks the old tree
+(a removed group's ghosts) by id before `/old/model.json` is fetched, never by
+key (keys can collide). Old and new ids collide, so the page keeps them in separate maps
+(`old:<id>`) and old files live only under `/old/`: `/old/model.json` and
+`/old/meshes/<id>.glb`, both in diff mode only. A moved group's centre is the
+mean of its parts' centres.
+
+Three modes (top bar, keys 1 / 2 / 3): **Version 1** is the old model alone
+(removed parts solid red, moved parts blue at their old place), **Version 2**
+the new model alone (added green, moved blue at the new place), **Changes** the
+new model with ghosts, move lines and detail. The old model is fetched the
+first time Version 1 is chosen ("loading version 1…"), so page-ready time does
+not grow; the camera stays and the selection follows via the partner ids. The
+left panel's **Changes** tab lists one row per change (a moved, added or
+removed group is one row), grouped modified > added > removed > moved >
+re-parented > renamed with the part's parent path and delta (`5.0 mm`,
+`−736.2 mm³`); a click selects the part and flies the camera to it in 0.6 s
+(a removed part at its ghost; a mode where the part does not exist switches to
+Changes first), and the summary chips in the top bar filter the list. The
+**Parts** tab is the tree. Modified parts also get
 `detail`: `{"state": "loaded", "added_mm3", "removed_mm3", "volume_change_mm3",
 "aligned", "files": {"added": false, "removed": true}}`, or `state` = the
 command to run, or the entry's own status ("could not compute" / "not a solid").

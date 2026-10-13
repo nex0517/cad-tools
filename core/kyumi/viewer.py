@@ -4,10 +4,11 @@ The browser gets three things: the page itself, `/model.json` (the tree with
 world transforms, so the page does no matrix maths), and `/meshes/<id>.glb`
 straight out of the .kyumi zip. Nothing is written to disk.
 
-Diff mode (`kyumi view OLD NEW`) adds `/changes.json`, `/old/meshes/<id>.glb`
-for removed parts and `/detail/<new id>/<side>.glb`; the CLI works all of that
-out with the diff package and hands it in as a `DiffView`, so this module never
-imports kyumi_diff.
+Diff mode (`kyumi view OLD NEW`) adds `/changes.json`, the old version under
+`/old/model.json` + `/old/meshes/<id>.glb` (fetched only when the page first shows
+Version 1) and `/detail/<new id>/<side>.glb`; the CLI works all of that out with
+the diff package and hands it in as a `DiffView`, so this module never imports
+kyumi_diff.
 """
 
 from __future__ import annotations
@@ -28,7 +29,7 @@ class DiffView:
     """Everything diff mode serves besides the new model (built by kyumi_diff.view)."""
 
     changes: dict  # what /changes.json answers
-    old: Model  # removed parts' meshes come from here
+    old: Model  # served under /old/: its model.json and its meshes
     old_meshes: set[str]  # the only old files served, e.g. {"meshes/s3.glb"}
     details: dict[str, dict[str, bytes | None]] = field(default_factory=dict)  # new id -> side
 
@@ -87,6 +88,8 @@ def make_handler(model: Model, view: DiffView | None = None) -> type[BaseHTTPReq
                 self.reply(200, "model/gltf-binary", model.read(self.path[1:]))
             elif view is not None and self.path == "/changes.json":
                 self.reply(200, "application/json", json.dumps(view.changes).encode())
+            elif view is not None and self.path == "/old/model.json":
+                self.reply(200, "application/json", json.dumps(model_json(view.old)).encode())
             elif view is not None and self.path.startswith("/old/meshes/"):
                 if self.path[len("/old/") :] in view.old_meshes:
                     self.reply(200, "model/gltf-binary", view.old.read(self.path[len("/old/") :]))

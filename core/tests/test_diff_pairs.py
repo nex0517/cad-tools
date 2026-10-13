@@ -46,9 +46,9 @@ def drone_v1(tmp_path_factory: pytest.TempPathFactory) -> Model:
     return import_pair_file(PAIR_DIR, "v1.step", tmp_path_factory.mktemp("v1"))
 
 
-def test_the_ten_planned_pairs_plus_arms_and_reparent_are_committed() -> None:
+def test_the_ten_planned_pairs_plus_arms_reparent_and_showcase_are_committed() -> None:
     names = {p.name.removesuffix(".expected.json") for p in PAIR_DIR.glob("*.expected.json")}
-    assert names == set(DRONE_PAIRS) and len(names) == 12
+    assert names == set(DRONE_PAIRS) and len(names) == 13
     assert all((PAIR_DIR / f"{name}.step").is_file() for name in names)
 
 
@@ -82,7 +82,7 @@ def test_swap_is_two_renames_and_renamed_is_only_renames() -> None:
 )
 def test_generic_mode_works_on_any_file(source: Path, tmp_path: Path) -> None:
     changes = make_pairs(source, tmp_path / "out")
-    assert changes == ["nochange", "rename", "move", "delete", "modify"]
+    assert changes == ["nochange", "rename", "move", "delete", "modify", "showcase"]
     v1 = import_pair_file(tmp_path / "out", "v1.step", tmp_path)
     for change in changes:
         expected = json.loads((tmp_path / "out" / f"{change}.expected.json").read_text("utf-8"))

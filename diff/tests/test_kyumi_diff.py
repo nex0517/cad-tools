@@ -8,6 +8,7 @@ import zipfile
 from dataclasses import replace
 from pathlib import Path
 
+import cadquery as cq
 import pytest
 from kyumi import Model, Node, import_step, load
 from kyumi.cli import main
@@ -15,6 +16,7 @@ from kyumi.package import manifest
 from kyumi_diff import Diff, agrees, diff, render_text
 from kyumi_diff.index import Index
 from make_diff_pairs import make_pairs
+from make_fixtures import Group, Part, Proto, at, write_step
 
 FIXTURES = Path(__file__).resolve().parents[2] / "fixtures"
 PAIRS = FIXTURES / "pairs" / "drone"
@@ -122,6 +124,31 @@ def test_generic_pairs_are_reproduced(source: str, tmp_path: Path) -> None:
             imported(out / "v1.step", tmp_path), imported(out / expected["new"], tmp_path)
         )
         assert agrees(result, expected), change
+
+
+def test_the_showcase_add_never_copies_a_twin_of_the_deleted_part(tmp_path: Path) -> None:
+    """Parts in key order A..E, C and D identical screws (two definitions): rename A,
+    move B, delete C, and the smallest left is D. A copy of D would look exactly
+    like C, and the matcher pairs same-shape parts at any distance, so the diff
+    would say "C moved 40 mm and was renamed" instead of one removed + one added."""
+    screw = Proto("Screw", cq.Workplane().circle(1.5).extrude(8))
+    twin = Proto("Screw2", cq.Workplane().circle(1.5).extrude(8))
+    parts = [
+        ("A_plate", Proto("PlateA", cq.Workplane().box(50, 50, 3)), (0, 0)),
+        ("B_plate", Proto("PlateB", cq.Workplane().box(40, 40, 3)), (100, 0)),
+        ("C_screw", screw, (30, 40)),
+        ("D_screw", twin, (-30, 40)),
+        ("E_block", Proto("Block", cq.Workplane().box(60, 30, 20)), (0, -80)),
+    ]
+    tree = Group("Probe", at(), [Part(n, p, at(x, y), None) for n, p, (x, y) in parts])
+    write_step(tree, tmp_path / "twins.step")
+    out = tmp_path / "pairs"
+    assert "showcase" in make_pairs(tmp_path / "twins.step", out)
+    expected = json.loads((out / "showcase.expected.json").read_text(encoding="utf-8"))
+    assert ["Probe", "D_screw_added"] not in expected["added"]
+    result = diff(imported(out / "v1.step", tmp_path), imported(out / "showcase.step", tmp_path))
+    assert agrees(result, expected)
+    assert result.summary["added"] == result.summary["removed"] == 1
 
 
 def tiled(model: Model, copies: int) -> Model:

@@ -283,6 +283,15 @@ def move_third_arm_unit(tree: Group, expected: Expected) -> None:
     expected.change(key, key, "moved", distance=5.0)
 
 
+def showcase(tree: Group, expected: Expected) -> None:
+    """One change of every kind in a single file: the demo pair."""
+    rename_motor(tree, expected)
+    move_motor(tree, expected)
+    delete_screw(tree, expected)
+    add_chip(tree, expected)
+    drill_plate(tree, expected)
+
+
 @dataclass
 class DronePair:
     note: str
@@ -317,6 +326,11 @@ DRONE_PAIRS = {
         move_third_arm_unit,
         base="arms_v1.step",
         tree=arm_units_tree,
+    ),
+    "showcase": DronePair(
+        "one of each: Motor_FL renamed, Motor_FR moved 5 mm, Screw_3 deleted, "
+        "Chip_Extra added, hole in CenterPlate",
+        showcase,
     ),
 }
 
@@ -442,10 +456,65 @@ def pick_largest(doc: TDocStd_Document) -> Key | None:
     return max(drillable, key=lambda p: volume_of(definition_shape(p.label))).key
 
 
-def definition_shape(label: TDF_Label) -> TopoDS_Shape:
+SAME_VOLUME = 1e-3  # relative; closer volumes could round to the same 4-digit fingerprint
+
+
+def pick_showcase(doc: TDocStd_Document) -> dict[str, Key]:
+    """Targets for the showcase pair: rename, move, delete, add (a second placement
+    of the smallest part) and drill, on five different parts with five different
+    definitions when the file has enough; an edit without a valid target is left out.
+
+    The matcher pairs parts of the same shape at any distance, so the add never
+    copies a part that could share a fingerprint with the deleted one (the diff
+    would report "the deleted part moved here"), and the drill never takes one that
+    could share a fingerprint with the add.
+    """
+    pool = editable_parts(doc)
+    picks: dict[str, Key] = {}
+    used: list[TDF_Label] = []  # definitions already picked
+    volumes: dict[str, float] = {}  # edit -> volume of the picked part
+
+    def volume(p: Placement) -> float:
+        return volume_of(definition_shape(p.label))
+
+    def fresh(p: Placement) -> bool:
+        return not any(definition_of(p.label).IsEqual(d) for d in used)
+
+    def unlike(p: Placement, edit: str) -> bool:
+        if edit not in volumes:
+            return True
+        a, b = volume(p), volumes[edit]
+        return abs(a - b) > SAME_VOLUME * max(abs(a), abs(b))
+
+    def take(edit: str, p: Placement) -> None:
+        pool.remove(p)
+        used.append(definition_of(p.label))
+        volumes[edit] = volume(p)
+        picks[edit] = p.key
+
+    for edit in ("rename", "move", "delete"):
+        first = next((p for p in pool if fresh(p)), None)
+        if first is not None:
+            take(edit, first)
+    addable = [p for p in pool if fresh(p) and unlike(p, "delete")]
+    if addable:
+        take("add", min(addable, key=volume))
+    # Drilling edits the definition, so every placement of it would get the hole:
+    # not a shared one, and not the one the add has just placed a second time.
+    drillable = [p for p in pool if fresh(p) and not p.shared_definition and unlike(p, "add")]
+    if drillable:
+        take("drill", max(drillable, key=volume))
+    return picks
+
+
+def definition_of(label: TDF_Label) -> TDF_Label:
     definition = TDF_Label()
     XCAFDoc_ShapeTool.GetReferredShape_s(label, definition)
-    return XCAFDoc_ShapeTool.GetShape_s(definition)
+    return definition
+
+
+def definition_shape(label: TDF_Label) -> TopoDS_Shape:
+    return XCAFDoc_ShapeTool.GetShape_s(definition_of(label))
 
 
 def volume_of(shape: TopoDS_Shape) -> float:
@@ -489,6 +558,31 @@ def xcaf_delete(doc: TDocStd_Document, key: Key, expected: Expected) -> None:
     expected.removed.append(key)
 
 
+def xcaf_add(doc: TDocStd_Document, key: Key, expected: Expected) -> None:
+    """A second placement of the part, beside the first (20 mm along x) and called
+    `<name>_added`, in the same assembly."""
+    tool = XCAFDoc_DocumentTool.ShapeTool_s(doc.Main())
+    target = placement(doc, key)
+    shift = gp_Trsf()
+    shift.SetTranslation(gp_Vec(20, 0, 0))
+    where = TopLoc_Location(shift) * XCAFDoc_ShapeTool.GetLocation_s(target.label)
+    added = tool.AddComponent(target.label.Father(), definition_of(target.label), where)
+    name = name_of(target.label) + "_added"
+    while name in target.sibling_names:
+        name += "_"
+    TDataStd_Name.Set_s(added, TCollection_ExtendedString(name))
+    tool.UpdateAssemblies()
+    expected.added.append([*key[:-1], name])
+
+
+SHOWCASE_EDITS: dict[str, Callable[[TDocStd_Document, Key, Expected], None]] = {}
+
+
+def xcaf_showcase(doc: TDocStd_Document, picks: dict[str, Key], expected: Expected) -> None:
+    for edit, key in picks.items():
+        SHOWCASE_EDITS[edit](doc, key, expected)
+
+
 def xcaf_drill(doc: TDocStd_Document, key: Key, expected: Expected) -> None:
     """A small hole through the part, along its thinnest direction, through the
     middle of its bounding box (or off-centre if the middle is already empty)."""
@@ -523,13 +617,19 @@ def xcaf_drill(doc: TDocStd_Document, key: Key, expected: Expected) -> None:
     expected.change(key, key, "modified", volume=delta)
 
 
+SHOWCASE_EDITS.update(
+    rename=xcaf_rename, move=xcaf_move, delete=xcaf_delete, add=xcaf_add, drill=xcaf_drill
+)
+
+
 def make_pairs(step: Path, out_dir: Path) -> list[str]:
-    """no-change, move, delete, rename and modify pairs for any STEP file; returns their names."""
+    """no-change, move, delete, rename, modify and showcase pairs for any STEP file;
+    returns their names."""
     out_dir.mkdir(parents=True, exist_ok=True)
     shutil.copy(step, out_dir / "v1.step")
     doc = read_doc(step)
-    targets, largest = pick_targets(doc), pick_largest(doc)
-    plan: list[tuple[str, str, Callable | None, Key | None]] = [
+    targets, largest, picks = pick_targets(doc), pick_largest(doc), pick_showcase(doc)
+    plan: list[tuple[str, str, Callable | None, Key | dict[str, Key] | None]] = [
         ("nochange", "v1 re-exported through the same writer, nothing else changed", None, None)
     ]
     if targets:
@@ -544,6 +644,11 @@ def make_pairs(step: Path, out_dir: Path) -> list[str]:
             plan.append(("modify", note, xcaf_drill, largest))
         else:
             print(f"{step.name}: every editable part is placed more than once; no modify pair")
+        done = ", ".join(f"{edit} {' / '.join(key)}" for edit, key in picks.items())
+        skipped = [edit for edit in SHOWCASE_EDITS if edit not in picks]
+        if skipped:
+            print(f"{step.name}: showcase pair has no valid target for: {', '.join(skipped)}")
+        plan.append(("showcase", f"one of each on different parts: {done}", xcaf_showcase, picks))
     else:
         print(f"{step.name}: no placed parts to move, rename or delete; writing nochange only")
     for change, note, apply, key in plan:
